@@ -1,0 +1,8 @@
+{
+  "name": "jcgcoach-notifications",
+  "version": "1.0.0",
+  "main": "notify.js",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

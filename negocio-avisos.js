@@ -42,7 +42,7 @@ function proxPago(c){ return c.prox || addMonths(c.inicio,(c.dur||0)+(c.congelad
 
 async function sendEmail(to,subject,text){
   if(!to) return;
-  try{ await mailer.sendMail({ from: `I'M FIT <${EMAIL_COACH_DEFAULT}>`, to, subject, text }); console.log('  ✉️  '+to+' · '+subject); }
+  try{ await mailer.sendMail({ from: `JorgeCGCoach <${EMAIL_COACH_DEFAULT}>`, to, subject, text }); console.log('  ✉️  '+to+' · '+subject); }
   catch(e){ console.error('  email ERROR '+to+': '+e.message); }
 }
 async function sendPush(tokens,title,body){

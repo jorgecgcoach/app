@@ -1,0 +1,11 @@
+node_modules/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+*-debug.log
+.firebase/
+.emulator-data/
+*.local.json
+service-account*.json
+*-service-account.json

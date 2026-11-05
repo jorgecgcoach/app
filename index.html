@@ -1912,7 +1912,7 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <span class="login-tag">Personal Training</span>
     <div id="clientLogin">
       <p>Introduce el código de acceso que te ha dado Jorge.</p>
-      <input id="loginCode" placeholder="EMILIO-7K2P" autocomplete="off" onkeydown="if(event.key==='Enter')loginClient()">
+      <input id="loginCode" placeholder="DEMO-XXXX" autocomplete="off" onkeydown="if(event.key==='Enter')loginClient()">
       <button class="login-btn" onclick="loginClient(this)">Entrar</button>
       <button class="coach-link" onclick="showCoachLogin()">Soy Jorge (entrenador)</button>
     </div>
@@ -1977,12 +1977,12 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <h3>Añadir un bloque</h3>
     <p>Crea un nuevo bloque de entrenamiento (mesociclo) para el cliente que elijas.</p>
     <label>Cliente</label>
-    <input id="addClient" list="clientList" placeholder="Emilio Abilio">
+    <input id="addClient" list="clientList" placeholder="Ana Ejemplo">
     <datalist id="clientList"></datalist>
     <label>Nombre del bloque</label>
     <input id="addLabel" placeholder="Mesociclo 8">
-    <label>Código de acceso del cliente <span class="opt">(su DNI, o lo que prefieras)</span></label>
-    <input id="addCode" placeholder="Ej. su DNI" onkeydown="if(event.key==='Enter')saveBlock()">
+    <label>Código de acceso del cliente <span class="opt">(el que tú elijas)</span></label>
+    <input id="addCode" placeholder="Ej. ANA-3F9K" onkeydown="if(event.key==='Enter')saveBlock()">
     <label>Tipo de servicio <span class="opt">(al crear un cliente nuevo)</span></label>
     <div id="addSvcPicker"></div>
     <div class="row">
@@ -1997,7 +1997,7 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <h3>Código de acceso</h3>
     <p class="modal-sub" id="codeModalSub"></p>
     <label>Código</label>
-    <input id="codeModalIn" placeholder="Ej. su DNI" onkeydown="if(event.key==='Enter')saveCodeModal()">
+    <input id="codeModalIn" placeholder="Ej. ANA-3F9K" onkeydown="if(event.key==='Enter')saveCodeModal()">
     <button class="linky" onclick="genCodeModal()">🎲 Generar uno automático</button>
     <div class="row">
       <button class="ghost" onclick="closeCodeModal()">Cancelar</button>
@@ -2598,7 +2598,7 @@ let DATA=null;
 // Load data from Firestore
 function freshData(){
   return {clients:{
-    demo:{name:"Demo - Emilio Abilio",mods:defaultMods(),menus:[],blocks:[
+    demo:{name:"Demo - Cliente Ejemplo",mods:defaultMods(),menus:[],blocks:[
       {id:"m7",label:"Mesociclo 7",cur:true,data:genBlock()},
       {id:"m6",label:"Mesociclo 6",cur:false,data:genBlock()}
     ]}
@@ -2896,7 +2896,7 @@ function exPickerFilter(q){
  if(total>EXPICK_RESULTS.length)html+=`<div class="expick-more">Mostrando ${EXPICK_RESULTS.length} de ${total}. Escribe para afinar la búsqueda…</div>`;
  box.innerHTML=html;
 }
-function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function exApplyToSlot(item){
  const ex=blockProgram().weeks[UI.week-1].days[EXPICK.di].exs[EXPICK.ei];
  if(!ex)return;
@@ -3462,7 +3462,7 @@ function crmInfo(ct){
   const meses=con.reduce((s,c)=>s+(+c.dur||0),0);
   const volvio=crmVolvio(ct,con);
   // estado
-  let estado;
+  let estado,vigente=false;
   const post=ct.fechaBaja?con.filter(c=>c.inicio>ct.fechaBaja):con;
   if(ct.estadoManual==='perdido')estado='perdido';
   else if(!con.length)estado='lead';
@@ -3470,12 +3470,13 @@ function crmInfo(ct){
   else{
     const vig=post.filter(c=>c.inicio&&c.inicio<=today&&negFin(c)>=today);
     const fut=post.filter(c=>c.inicio&&c.inicio>today);
+    vigente=!!vig.length;
     if(vig.length)estado=vig.every(c=>negIsFrozen(c))?'congelado':(volvio?'recuperado':'activo');
     else if(fut.length)estado=volvio?'recuperado':'activo';
     else estado='pasado';
   }
   const bajaFecha=ct.fechaBaja||(estado==='pasado'?(fins[fins.length-1]||''):'');
-  return {con,pay,ltv,ltvFallback,facturado,nContratos:con.length,primeraFecha,ultimaFecha,meses,volvio,estado,bajaFecha};
+  return {con,pay,ltv,ltvFallback,facturado,nContratos:con.length,primeraFecha,ultimaFecha,meses,volvio,estado,bajaFecha,vigente};
 }
 function crmPill(e){const lbl=(CRM_ESTADOS.find(x=>x[0]===e)||[e,e])[1];return `<span class="neg-pill crm-${e}">${lbl}</span>`;}
 function crmMotivoLbl(m){return (CRM_MOTIVOS.find(x=>x[0]===m)||['',''])[1];}
@@ -3487,7 +3488,7 @@ function crmRows(){
   const f=crmState();const q=crmKey(f.q);
   let rows=negContacts().map(ct=>({ct,i:crmInfo(ct)}));
   rows=rows.filter(({ct,i})=>{
-    if(f.estado!=='all'&&i.estado!==f.estado)return false;
+    if(f.estado!=='all'&&!(f.estado==='activo'?(i.estado==='activo'||(i.estado==='recuperado'&&i.vigente)):i.estado===f.estado))return false;
     if(f.tag&&!ct.etiquetas.includes(f.tag))return false;
     if(f.origen&&ct.origen!==f.origen)return false;
     if(f.vueltos&&!i.volvio)return false;
@@ -3563,7 +3564,7 @@ function renderCrmContact(){
   ${inp('nombre','Nombre')}${inp('telefono','Teléfono','tel')}${inp('correo','Correo','email')}
   <label>Origen</label><select onchange="crmField(${id},'origen',this.value)">${CRM_ORIGENES.map(o=>`<option value="${o[0]}"${ct.origen===o[0]?' selected':''}>${o[1]}</option>`).join('')}</select>
   ${inp('fechaPrimerContacto','Primer contacto','date')}
-  <label>Etiquetas</label><div class="crm-tagpick">${tagsAll.map(t=>`<button class="crm-tag${ct.etiquetas.includes(t)?' on':''}" onclick="crmToggleTag(${id},'${escapeHtml(t).replace(/'/g,"\\'")}')">${escapeHtml(t)}</button>`).join('')}<input placeholder="+ etiqueta" maxlength="24" onchange="crmAddTag(${id},this.value)"></div>
+  <label>Etiquetas</label><div class="crm-tagpick">${tagsAll.map((t,ti)=>`<button class="crm-tag${ct.etiquetas.includes(t)?' on':''}" onclick="crmToggleTag(${id},${ti})">${escapeHtml(t)}</button>`).join('')}<input placeholder="+ etiqueta" maxlength="24" onchange="crmAddTag(${id},this.value)"></div>
   <label>Cliente de entrenamiento vinculado <span class="opt">(opcional)</span></label><select onchange="crmField(${id},'clientId',this.value||null)"><option value="">— Ninguno —</option>${clients.map(c=>`<option value="${escapeHtml(c[0])}"${ct.clientId===c[0]?' selected':''}>${escapeHtml(c[1])}</option>`).join('')}</select>
   <label>Notas</label><textarea onchange="crmField(${id},'notas',this.value)">${escapeHtml(ct.notas||'')}</textarea>
   <div class="neg-sect">Historial</div>
@@ -3572,7 +3573,7 @@ function renderCrmContact(){
   m.querySelector('.modal').innerHTML=h;
 }
 function crmField(id,f,v){const ct=crmFind(id);if(!ct)return;ct[f]=(f==='clientId')?(v||null):String(v==null?'':v).trim();crmTouch(ct);save();if(f==='nombre')renderCrmContact();}
-function crmToggleTag(id,t){const ct=crmFind(id);if(!ct)return;const i=ct.etiquetas.indexOf(t);if(i>=0)ct.etiquetas.splice(i,1);else ct.etiquetas.push(t);crmTouch(ct);save();renderCrmContact();}
+function crmToggleTag(id,t){const ct=crmFind(id);if(!ct)return;if(typeof t==='number'){t=[...new Set(CRM_TAGS.concat(ct.etiquetas))][t];if(!t)return;}const i=ct.etiquetas.indexOf(t);if(i>=0)ct.etiquetas.splice(i,1);else ct.etiquetas.push(t);crmTouch(ct);save();renderCrmContact();}
 function crmAddTag(id,v){const ct=crmFind(id);v=String(v||'').trim().slice(0,24);if(!ct||!v)return;if(!ct.etiquetas.includes(v))ct.etiquetas.push(v);crmTouch(ct);save();renderCrmContact();}
 function crmSetManual(id,v){const ct=crmFind(id);if(!ct)return;ct.estadoManual=v;crmTouch(ct);save();renderCrmContact();toast(v==='perdido'?'Lead marcado como perdido':'Lead reabierto');}
 function crmNewLead(){
@@ -8088,9 +8089,9 @@ function resetLoginButtons(){try{document.querySelectorAll('.login-btn').forEach
 async function loginClient(btn){
  const code=$("#loginCode").value.trim().toUpperCase();
  if(!code){toast("Escribe tu código");return}
- if(!DATA.codes){toast("Error: no hay códigos registrados en el sistema");console.log("DATA.codes undefined");return}
+ if(!DATA.codes){toast("Error: no hay códigos registrados en el sistema");return}
  const codeInfo=DATA.codes[code];
- if(!codeInfo){toast("Código '"+code+"' no encontrado. Verifica que sea correcto.");console.log("Código buscado:",code,"Códigos disponibles:",Object.keys(DATA.codes));return}
+ if(!codeInfo){toast("Código no encontrado. Verifica que sea correcto.");return}
  setBtnLoading(btn,true,'Entrando…');
  SESSION={role:'client',code,clientId:codeInfo.client};
  Store.set("jcg_session",SESSION);
@@ -8195,7 +8196,7 @@ function clientCodeOf(cid){if(!cid)return null;const c=DATA.clients[cid];if(c&&c
 function normCode(s){return String(s||'').toUpperCase().replace(/\s+/g,'').trim()}
 function assignClientCode(cid,raw){const code=normCode(raw);if(code.length<3){toast("El código debe tener al menos 3 caracteres");return false}DATA.codes=DATA.codes||{};if(DATA.codes[code]&&DATA.codes[code].client!==cid){toast("Ese código ya lo usa otro cliente");return false}Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k].client===cid)delete DATA.codes[k]});DATA.codes[code]={client:cid};if(DATA.clients[cid])DATA.clients[cid].code=code;save(cid);return true}
 let CODE_CID=null;
-function openCodeModal(cid){CODE_CID=cid;const c=DATA.clients[cid];$("#codeModalSub").textContent=`Código de acceso de ${c?c.name:'el cliente'}. Ponle uno fácil de recordar (por ejemplo, su DNI). Siempre será el mismo.`;$("#codeModalIn").value=clientCodeOf(cid)||"";$("#codeScrim").classList.add("open");setTimeout(()=>{const i=$("#codeModalIn");if(i)i.focus()},60)}
+function openCodeModal(cid){CODE_CID=cid;const c=DATA.clients[cid];$("#codeModalSub").textContent=`Código de acceso de ${c?c.name:'el cliente'}. Ponle uno fácil de recordar (el que tú elijas). Siempre será el mismo.`;$("#codeModalIn").value=clientCodeOf(cid)||"";$("#codeScrim").classList.add("open");setTimeout(()=>{const i=$("#codeModalIn");if(i)i.focus()},60)}
 function closeCodeModal(){$("#codeScrim").classList.remove("open")}
 function genCodeModal(){const c=DATA.clients[CODE_CID];if(!c)return;const base=(c.name.split(" ")[0].toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6))||"CLIENTE";const r=Math.random().toString(36).slice(2,6).toUpperCase();$("#codeModalIn").value=`${base}-${r}`}
 function saveCodeModal(){if(!CODE_CID)return;if(assignClientCode(CODE_CID,$("#codeModalIn").value)){closeCodeModal();renderSide();if(MENU_CID===CODE_CID&&$("#clientMenuScrim").classList.contains("open"))renderClientMenu();toast("Código guardado: "+clientCodeOf(CODE_CID))}}

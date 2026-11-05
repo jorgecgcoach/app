@@ -1,0 +1,16 @@
+{
+  "name": "jcgcoach-firestore-auth",
+  "private": true,
+  "description": "Reglas de Firestore y preparación de Auth. No despliega nada.",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-appjorgecgcoach \"node --test auth/code-identity.test.js firestore/rules.test.js scripts/migrate-client-auth.test.js\"",
+    "test:identity": "node --test auth/code-identity.test.js scripts/migrate-client-auth.test.js",
+    "migrate:dry-run": "node scripts/migrate-client-auth.js --backup scripts/fixtures/backup.sample.json"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "3.0.4",
+    "firebase": "^10.14.1",
+    "firebase-admin": "^12.7.0",
+    "firebase-tools": "^13.29.1"
+  }
+}

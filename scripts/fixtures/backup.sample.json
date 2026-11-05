@@ -1,0 +1,20 @@
+{
+  "_type": "jcgcoach_backup",
+  "exportedAt": "2026-01-15T10:00:00.000Z",
+  "meta": {
+    "active": { "c": null, "b": null },
+    "coachCode": "0000",
+    "codes": {
+      "DEMO-1234": { "client": "c-ejemplo-1" },
+      "00000000T": { "client": "c-ejemplo-2" },
+      "EJEMPLO-7K": { "client": "c-ejemplo-3" }
+    },
+    "exLibrary": []
+  },
+  "clients": {
+    "c-ejemplo-1": { "name": "Cliente Ejemplo Uno", "code": "DEMO-1234", "blocks": [] },
+    "c-ejemplo-2": { "name": "Cliente Ejemplo Dos", "code": "00000000T", "blocks": [] },
+    "c-ejemplo-3": { "name": "Cliente Ejemplo Tres", "code": "EJEMPLO-7K", "blocks": [] },
+    "c-ejemplo-4": { "name": "Cliente Ejemplo Sin Código", "blocks": [] }
+  }
+}

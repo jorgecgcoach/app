@@ -1,9 +1,11 @@
-# .github/workflows/negocio-avisos.yml
 # Avisos diarios de pagos y renovaciones (I'M FIT).
+# Cron 05:00 UTC = 06:00 CET / 07:00 CEST (Europe/Madrid).
+# Va al menos 1 h antes de las 08:00/09:00 peninsulares: si Actions se retrasa,
+# el aviso sigue llegando por la mañana. Antes: '0 7 * * *' (07:00 UTC).
 name: Avisos de negocio
 on:
   schedule:
-    - cron: '0 7 * * *'   # 09:00 hora peninsular (07:00 UTC). Ajusta si lo quieres a otra hora.
+    - cron: '0 5 * * *'
   workflow_dispatch:        # permite lanzarlo a mano desde la pestaña Actions
 jobs:
   avisos:
@@ -13,6 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      # firebase-admin y nodemailer, que es lo que negocio-avisos.js requiere.
+      # No hay package.json en la raíz a propósito: lo añade el PR de reglas.
       - run: npm install firebase-admin nodemailer
       - run: node negocio-avisos.js
         env:

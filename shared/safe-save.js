@@ -621,11 +621,15 @@
     }
 
     /* Al arrancar: cambios que quedaron sin guardar en una pestaña cerrada. */
-    function recover(ids) {
+    /* ropts.othersOnly: solo pestañas cerradas, no la propia. Sirve para volver
+       a mirar unos segundos después de abrir: tras una recarga rápida la
+       pestaña anterior aún parece viva y su journal no se ve al arrancar. */
+    function recover(ids, ropts) {
       const wanted = ids ? new Set(ids) : null;
       const report = [];
       for (const entry of journal.orphans()) {
         if (wanted && !wanted.has(entry.id)) continue;
+        if (ropts && ropts.othersOnly && entry.tab === (cfg.tabId || 'tab')) continue;
         const local = getLocal(entry.id);
         if (local === undefined) continue;
         const merged = applyOps(local, entry.ops);
@@ -658,8 +662,62 @@
       if (s.known) cfg.applyLocal(id, s.base ? clone(s.base) : null);
     }
 
+    /* Solo por decisión explícita del usuario, ante un conflicto: en los datos
+       que chocan se queda lo de la nube; todo lo demás pendiente en este
+       dispositivo (lo editado antes y después del conflicto, y lo de pestañas
+       cerradas) se guarda encima de la versión actual del servidor, en una
+       transacción. Si no se puede leer o escribir (sin conexión...), no se
+       toca nada: lo pendiente sigue en memoria y en el journal. */
+    async function resolveWithCloud(id) {
+      const s = st(id);
+      if (s.inflight) { try { await s.inflight; } catch (_) {} }
+      const local = getLocal(id);
+      const orphanEntries = journal.orphans().filter(e => e.id === id);
+      const ops = [];
+      for (const e of orphanEntries.sort((x, y) => (x.at || 0) - (y.at || 0))) ops.push(...e.ops);
+      if (local !== undefined && s.known) ops.push(...localOps(id, s.base, local));
+      let result;
+      try {
+        result = await withTimeout(cfg.db.runTransaction(async t => {
+          const snap = await t.get(ref(id));
+          const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
+          const raw = exists ? snap.data() : null;
+          if (!exists) return { deleted: true };
+          const remoteDoc = stripSync(raw);
+          const merged = applyOps(remoteDoc, ops);
+          const rev = raw._rev || 0;
+          if (deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev, conflicts: merged.conflicts, wrote: false };
+          if (jsonSize(merged.doc) > limit) throw err('size');
+          t.set(ref(id), Object.assign({}, merged.doc, { _rev: rev + 1, _updatedAt: new Date(now()).toISOString(), _updatedBy: cfg.tabId || 'tab' }));
+          return { doc: merged.doc, rev: rev + 1, conflicts: merged.conflicts, wrote: true };
+        }));
+      } catch (e) {
+        const reason = e && e.kind === 'size' ? 'size' : 'error';
+        status(id, reason === 'size' ? 'size' : 'error', e);
+        return { ok: false, reason, error: e };
+      }
+      for (const entry of orphanEntries) journal.drop(entry.key);
+      journal.clear(id);
+      s.blocked = null; s.again = false; s.latestRemote = undefined; s.lastError = null;
+      if (result.deleted) {
+        // Borrado en la nube: no se resucita sin que el usuario lo cree de nuevo.
+        s.base = null; s.rev = 0;
+        cfg.applyLocal(id, null);
+        status(id, 'remote');
+        return { ok: true, deleted: true, kept: 0, dropped: [] };
+      }
+      s.known = true; s.base = clone(result.doc); s.rev = result.rev;
+      cfg.applyLocal(id, clone(result.doc));
+      status(id, 'saved');
+      // La misma ruta puede venir del journal y de la memoria: se cuenta una vez.
+      const droppedPaths = new Set(result.conflicts.map(c => c.path));
+      const dropped = Array.from(droppedPaths).map(p => result.conflicts.find(c => c.path === p));
+      const kept = new Set(ops.map(o => pathLabel(o.p)).filter(p => !droppedPaths.has(p))).size;
+      return { ok: true, wrote: result.wrote, dropped, kept };
+    }
+
     return {
-      setBase, forget, save, remote, recover, pendingOps, discardPending, absorb, markDefaults,
+      setBase, forget, save, remote, recover, pendingOps, discardPending, resolveWithCloud, absorb, markDefaults,
       heartbeat: journal.heartbeat,
       orphans: journal.orphans,
       isKnown: id => st(id).known,

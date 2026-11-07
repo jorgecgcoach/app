@@ -1652,7 +1652,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
-<script src="shared/safe-save.js"></script>
+<script src="shared/safe-save.js?v=20261107-resolver"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -3070,7 +3070,7 @@ function showSaveError(kind,cid,info){
     const where=(info||[]).slice(0,3).map(c=>escapeHtml(c.path+' ('+c.why+')')).join(', ');
     b.innerHTML='⚠️ NO se ha guardado '+escapeHtml(who)+': se cambió a la vez en otro dispositivo'+(where?' <small style="opacity:.85">['+where+']</small>':'')+'. Para no pisar nada, este dispositivo no guardará hasta que elijas.'
       +'<br><button style="'+SAVE_BTN_CSS+'" onclick="downloadPendingChanges(\''+cid+'\')">⬇️ Descargar mis cambios</button>'
-      +'<button style="'+SAVE_BTN_CSS+'" onclick="discardPendingChanges(\''+cid+'\')">Usar lo de la nube</button>'
+      +'<button style="'+SAVE_BTN_CSS+'" onclick="discardPendingChanges(\''+cid+'\')">'+(hasResolveWithCloud()?'☁️ Usar la nube solo en lo que choca':'Usar lo de la nube')+'</button>'
       +'<button style="'+SAVE_BTN_CSS+'" onclick="location.reload()">Recargar</button>';
     return;
   }
@@ -3204,11 +3204,20 @@ function downloadPendingChanges(id){
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 function SYNC_GETLOCAL(id){if(id===COACH_DOC)return metaLocalDoc();const c=DATA&&DATA.clients&&DATA.clients[id];return c?sanitizeForFirestore(c):null;}
-function discardPendingChanges(id){
-  if(!confirm('Se descartarán los cambios de ESTE dispositivo que chocan y se usará lo que hay en la nube.\n\nSi no los has descargado, se perderán. ¿Seguir?'))return;
-  const sync=getSync();if(!sync)return;
-  sync.discardPending(id);
+let _resolving=false;
+// Versión corregida: el botón cambia de texto solo si el módulo cargado la trae.
+function hasResolveWithCloud(){const sync=getSync();return !!(sync&&typeof sync.resolveWithCloud==='function');}
+async function discardPendingChanges(id){
+  const sync=getSync();if(!sync||_resolving)return;
+  if(!hasResolveWithCloud()){alert('Este dispositivo aún tiene una versión anterior de la app. No se ha tocado nada. Cierra la app del todo, vuelve a abrirla y comprueba que el botón dice «Usar la nube solo en lo que choca».');return;}
+  const n=(sync.blockedInfo(id)||[]).length;
+  if(!confirm('En '+(n===1?'el dato que choca':'los '+n+' datos que chocan')+' se usará lo que hay en la nube (se pierde la versión de ESTE dispositivo).\n\nEl resto de cambios de este dispositivo que no chocan SE GUARDAN.\n\nSi quieres conservar también lo que choca, pulsa antes «Descargar mis cambios». ¿Seguir?'))return;
+  _resolving=true;
+  let r;
+  try{r=await sync.resolveWithCloud(id);}finally{_resolving=false;}
+  if(!r||!r.ok){alert('No se ha podido resolver ahora (¿sin conexión?). No se ha perdido nada: tus cambios siguen en este dispositivo. Inténtalo de nuevo con conexión.');return;}
   _syncProblems.delete(id);renderSyncBanner();
+  alert(r.deleted?'Este registro se borró en otro dispositivo; no se ha vuelto a crear.':'Resuelto. Cambios de este dispositivo guardados: '+r.kept+'. Datos en los que se ha usado lo de la nube: '+r.dropped.length+'.');
   location.reload(); // recarga desde la nube para partir de datos frescos
 }
 /* ---- tiempo real: lo que cambia otro dispositivo llega aquí ---- */
@@ -3228,6 +3237,7 @@ function startRealtime(){
   }
 }
 // Al terminar una carga: tiempo real y recuperar cambios que quedaron sin subir.
+var _recoverLateT=null;
 function afterDataLoaded(){
   const sync=getSync();if(!sync||!SESSION)return;
   markLoadDefaults();
@@ -3236,6 +3246,13 @@ function afterDataLoaded(){
     const ids=SESSION.role==='client'?[SESSION.clientId]:null;
     sync.recover(ids);
   }catch(e){console.warn('recuperar pendientes',e);}
+  // Tras una recarga rápida la pestaña anterior aún parece viva (latido < 15 s)
+  // y sus cambios pendientes no se ven al arrancar: se vuelve a mirar después.
+  clearTimeout(_recoverLateT);
+  _recoverLateT=setTimeout(()=>{
+    try{const s=getSync();if(s&&SESSION)s.recover(SESSION.role==='client'?[SESSION.clientId]:null,{othersOnly:true});}
+    catch(e){console.warn('recuperar pendientes',e);}
+  },16000);
 }
 window.addEventListener('online',()=>{retryPendingSaves();scheduleSweep();});
 // Avisa si queda algo sin confirmar en la nube: errores/conflictos, una serie

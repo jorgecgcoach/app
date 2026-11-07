@@ -28,6 +28,25 @@ function snapshotDocs(snapshot) {
   return docs;
 }
 
+/* Quita los tokens inválidos releyendo la ficha dentro de una transacción.
+   Entre la lectura inicial y este punto pasan segundos (envíos): si el
+   cliente registró otro token o cambió push.enabled, se respeta. Solo se
+   toca push.tokens y solo para quitar los inválidos. */
+async function removeInvalidTokens(db, id, bad) {
+  const ref = db.collection('clients').doc(id);
+  return db.runTransaction(async (t) => {
+    const snap = await t.get(ref);
+    const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
+    if (!exists) return null;
+    const cur = ((typeof snap.data === 'function' ? snap.data() : snap.data) || {}).push;
+    if (!cur || !Array.isArray(cur.tokens)) return null;
+    const tokens = cur.tokens.filter((tk) => bad.indexOf(tk) === -1);
+    if (tokens.length === cur.tokens.length) return null;
+    t.update(ref, { 'push.tokens': tokens });
+    return tokens;
+  });
+}
+
 async function sendNotifications(deps) {
   const summary = report.emptySummary();
   const snapshot = await deps.db.collection('clients').get();
@@ -36,8 +55,7 @@ async function sendNotifications(deps) {
     const client = (typeof doc.data === 'function' ? doc.data() : doc.data) || {};
     const push = client.push;
     if (!push || !push.enabled || !Array.isArray(push.tokens) || !push.tokens.length) continue;
-    const kept = [];
-    let removed = false;
+    const invalid = [];
     for (const token of push.tokens) {
       if (typeof token !== 'string' || !token.trim()) continue;
       try {
@@ -49,22 +67,18 @@ async function sendNotifications(deps) {
           }
         });
         report.addOk(summary, 1);
-        kept.push(token);
       } catch (err) {
         if (INVALID_TOKEN.has(err && err.code)) {
-          removed = true;
+          invalid.push(token);
           report.addSkip(summary, { channel: 'push', reason: err.code });
         } else {
-          kept.push(token);
           report.addFail(summary, { channel: 'push', reason: report.safeReason(err) });
         }
       }
     }
-    if (removed) {
+    if (invalid.length) {
       try {
-        await deps.db.collection('clients').doc(doc.id).update({
-          push: Object.assign({}, push, { tokens: kept })
-        });
+        await removeInvalidTokens(deps.db, doc.id, invalid);
       } catch (err) {
         report.addFail(summary, {
           channel: 'push',
@@ -126,15 +140,22 @@ async function runFixture(file) {
           };
         },
         doc(id) {
-          return {
-            async update(payload) {
-              if (fixture.updateError) throw new Error(fixture.updateError);
-              if (!Array.isArray(fixture.updates)) fixture.updates = [];
-              fixture.updates.push({ id, payload });
-            }
-          };
+          return { id };
         }
       };
+    },
+    async runTransaction(fn) {
+      return fn({
+        async get(ref) {
+          const client = clients.find((c) => c.id === ref.id);
+          return { exists: !!client, data: () => client && (client.data || client) };
+        },
+        update(ref, payload) {
+          if (fixture.updateError) throw new Error(fixture.updateError);
+          if (!Array.isArray(fixture.updates)) fixture.updates = [];
+          fixture.updates.push({ id: ref.id, payload });
+        }
+      });
     }
   };
   const messaging = {

@@ -637,6 +637,155 @@ test('descartar por decisión del usuario se queda con lo de la nube', async () 
   assert.equal(srv.get('cli1')._rev, 1); // solo la escritura de A
 });
 
+/* Caso del iPhone: dos dispositivos cambian las mismas series; el que queda
+   bloqueado sigue editando otras cosas. Resolver con la nube solo cede lo que choca. */
+test('resolver con la nube: en lo que choca gana la nube y lo demás pendiente se guarda', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const a = device(srv, 'A'); const b = device(srv, 'B', { storage });
+  a.load('cli1'); b.load('cli1');
+  blk(a.local.cli1).log['ex1|0'].reps = 10; // otro dispositivo
+  assert.ok((await a.sync.save('cli1')).ok);
+  blk(b.local.cli1).log['ex1|0'].reps = 9; // choca
+  blk(b.local.cli1).log['ex2|0'] = { kg: 40, reps: 8 }; // serie nueva, no choca
+  assert.equal((await b.sync.save('cli1')).reason, 'conflict');
+  blk(b.local.cli1).exNotes.ex2 = 'Nota tras el conflicto'; // sigue editando
+  await b.sync.save('cli1');
+  const r = await b.sync.resolveWithCloud('cli1');
+  assert.ok(r.ok && r.wrote);
+  assert.deepEqual(r.dropped.map(c => c.path), [S.pathLabel(['blocks', { k: 'id', v: 'm7' }, 'data', 'log', 'ex1|0', 'reps'])]);
+  const d = blk(srv.get('cli1'));
+  assert.equal(d.log['ex1|0'].reps, 10); // la nube
+  assert.deepEqual(d.log['ex2|0'], { kg: 40, reps: 8 }); // conservado
+  assert.equal(d.exNotes.ex2, 'Nota tras el conflicto'); // conservado
+  assert.equal(srv.get('cli1')._rev, 2);
+  assert.deepEqual(S.stripSync(srv.get('cli1')), b.local.cli1);
+  assert.ok(!b.sync.isBlocked('cli1'));
+  assert.equal(b.sync.hasUnsaved(), false);
+  assert.equal(storage.getItem('jcg_pending:B:cli1'), null);
+});
+
+test('resolver con la nube: si el otro dispositivo cambia algo mientras, también se respeta', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1');
+  blk(a.local.cli1).exNotes.ex1 = 'A'; await a.sync.save('cli1');
+  blk(b.local.cli1).exNotes.ex1 = 'B';
+  blk(b.local.cli1).log['ex1|0'].kg = 70;
+  await b.sync.save('cli1');
+  assert.ok(b.sync.isBlocked('cli1'));
+  // Justo durante la resolución, el otro dispositivo cambia el mismo peso.
+  srv.beforeCommit = () => { const x = srv.get('cli1'); blk(x).log['ex1|0'].kg = 65; srv.put('cli1', x); };
+  const r = await b.sync.resolveWithCloud('cli1');
+  assert.ok(r.ok);
+  const d = blk(srv.get('cli1'));
+  assert.equal(d.exNotes.ex1, 'A');
+  assert.equal(d.log['ex1|0'].kg, 65); // no se pisa lo que llegó durante la resolución
+  assert.equal(r.kept, 0);
+  assert.deepEqual(S.stripSync(srv.get('cli1')), b.local.cli1);
+});
+
+test('resolver con la nube sin conexión: no se pierde nada y sigue bloqueado', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const a = device(srv, 'A'); const b = device(srv, 'B', { storage });
+  a.load('cli1'); b.load('cli1');
+  blk(a.local.cli1).exNotes.ex1 = 'A'; await a.sync.save('cli1');
+  blk(b.local.cli1).exNotes.ex1 = 'B';
+  blk(b.local.cli1).exNotes.ex2 = 'solo B';
+  await b.sync.save('cli1');
+  srv.online = false;
+  const r = await b.sync.resolveWithCloud('cli1');
+  assert.equal(r.ok, false);
+  assert.ok(b.sync.isBlocked('cli1'));
+  assert.equal(blk(b.local.cli1).exNotes.ex2, 'solo B');
+  assert.ok(JSON.parse(storage.getItem('jcg_pending:B:cli1')).ops.length >= 2);
+  srv.online = true;
+  const r2 = await b.sync.resolveWithCloud('cli1');
+  assert.ok(r2.ok);
+  assert.equal(blk(srv.get('cli1')).exNotes.ex2, 'solo B');
+  assert.equal(blk(srv.get('cli1')).exNotes.ex1, 'A');
+});
+
+test('resolver con la nube recupera lo de una pestaña cerrada y no resucita un cliente borrado', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  srv.put('cli2', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const old = device(srv, 'VIEJA', { storage, clock }); old.load('cli1');
+  const a = device(srv, 'A'); a.load('cli1');
+  blk(old.local.cli1).exNotes.ex2 = 'de la pestaña cerrada';
+  blk(old.local.cli1).exNotes.ex1 = 'vieja';
+  old.sync.save('cli1'); srv.online = false; await tick(); srv.online = true;
+  blk(a.local.cli1).exNotes.ex1 = 'A'; await a.sync.save('cli1');
+  clock.t += 10 * 60 * 1000; // la pestaña vieja está muerta
+  const b = device(srv, 'B', { storage, clock }); b.load('cli1');
+  const rep = b.sync.recover(['cli1']);
+  assert.equal(rep[0].ok, false); // choca: se bloquea
+  const r = await b.sync.resolveWithCloud('cli1');
+  assert.ok(r.ok);
+  assert.equal(blk(srv.get('cli1')).exNotes.ex1, 'A');
+  assert.equal(blk(srv.get('cli1')).exNotes.ex2, 'de la pestaña cerrada');
+  assert.equal(b.sync.orphans().length, 0);
+  // Cliente borrado en la nube: no se vuelve a crear.
+  const c = device(srv, 'C'); c.load('cli2');
+  blk(c.local.cli2).exNotes.ex1 = 'C';
+  srv.remove('cli2');
+  await c.sync.save('cli2');
+  const r3 = await c.sync.resolveWithCloud('cli2');
+  assert.ok(r3.ok && r3.deleted);
+  assert.equal(srv.get('cli2'), null);
+  assert.equal(c.local.cli2, undefined);
+});
+
+test('recarga rápida con un conflicto: lo pendiente aparece al volver a mirar, sin perderse', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A');
+  const old = device(srv, 'VIEJA', { storage, clock }); old.load('cli1');
+  a.load('cli1');
+  blk(a.local.cli1).exNotes.ex1 = 'A'; await a.sync.save('cli1');
+  old.sync.heartbeat();
+  blk(old.local.cli1).exNotes.ex1 = 'iPhone';
+  blk(old.local.cli1).exNotes.ex2 = 'solo iPhone';
+  await old.sync.save('cli1');
+  assert.ok(old.sync.isBlocked('cli1'));
+  // Recarga: la pestaña nueva arranca 2 s después; la vieja aún parece viva.
+  clock.t += 2000;
+  const nueva = device(srv, 'NUEVA', { storage, clock }); nueva.load('cli1');
+  assert.deepEqual(nueva.sync.recover(['cli1']), []);
+  assert.ok(storage.getItem('jcg_pending:VIEJA:cli1'), 'el journal sigue ahí');
+  clock.t += 16000; // segunda mirada
+  const rep = nueva.sync.recover(['cli1'], { othersOnly: true });
+  assert.equal(rep.length, 1);
+  assert.equal(rep[0].ok, false); // vuelve a mostrar el conflicto
+  assert.ok(nueva.sync.isBlocked('cli1'));
+  const r = await nueva.sync.resolveWithCloud('cli1');
+  assert.ok(r.ok);
+  assert.equal(blk(srv.get('cli1')).exNotes.ex1, 'A');
+  assert.equal(blk(srv.get('cli1')).exNotes.ex2, 'solo iPhone');
+});
+
+test('la segunda mirada no reprocesa el journal de la propia pestaña', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const b = device(srv, 'B', { storage }); b.load('cli1');
+  srv.online = false;
+  blk(b.local.cli1).exNotes.ex1 = 'uno';
+  await b.sync.save('cli1');
+  blk(b.local.cli1).exNotes.ex1 = 'dos'; // editado de nuevo, aún sin guardar
+  assert.deepEqual(b.sync.recover(['cli1'], { othersOnly: true }), []);
+  assert.ok(!b.sync.isBlocked('cli1'));
+  assert.equal(blk(b.local.cli1).exNotes.ex1, 'dos');
+});
+
 test('escritura concurrente durante la transacción: se reintenta y no se pierde ninguna', async () => {
   const srv = fakeServer();
   srv.put('cli1', clienteFicticio());
@@ -857,7 +1006,10 @@ test('index.html: el aviso al cerrar mira el gestor y el borrado espera a la nub
 
 test('index.html: sin set() directos sobre clients, sin persistencia y con el módulo cargado', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  assert.ok(html.includes('<script src="shared/safe-save.js"></script>'));
+  assert.ok(/<script src="shared\/safe-save\.js(\?v=[\w-]+)?"><\/script>/.test(html));
+  // El botón del conflicto usa la resolución que conserva lo que no choca.
+  assert.ok(/sync\.resolveWithCloud\(id\)/.test(html));
+  assert.ok(!/sync\.discardPending\(id\)/.test(html), 'el botón no debe tirar todo lo pendiente');
   assert.ok(!/enablePersistence\s*\(/.test(html), 'la persistencia local debe estar desactivada');
   assert.ok(!/clientsCol\(\)\.doc\([^)]*\)\.set\(/.test(html), 'no debe quedar clientsCol().doc().set()');
   assert.ok(!/collection\('clients'\)\.doc\([^)]*\)\.set\(/.test(html), "no debe quedar collection('clients').doc().set()");

@@ -3196,7 +3196,8 @@ function scheduleSweep(){
 }
 function downloadPendingChanges(id){
   const sync=getSync();if(!sync)return;
-  const dump={_type:'jcgcoach_cambios_pendientes',exportedAt:new Date().toISOString(),doc:id,conflicts:sync.blockedInfo(id),cambios:sync.pendingOps(id),local:SYNC_GETLOCAL(id)};
+  // journal: también lo que dejaron pestañas cerradas (tras recargar no está en memoria)
+  const dump={_type:'jcgcoach_cambios_pendientes',exportedAt:new Date().toISOString(),doc:id,conflicts:sync.blockedInfo(id),cambios:sync.pendingOps(id),journal:sync.orphans().filter(e=>e.id===id),local:SYNC_GETLOCAL(id)};
   const blob=new Blob([JSON.stringify(dump,null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='cambios-sin-guardar-'+id+'-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json';
@@ -3237,9 +3238,15 @@ function afterDataLoaded(){
   }catch(e){console.warn('recuperar pendientes',e);}
 }
 window.addEventListener('online',()=>{retryPendingSaves();scheduleSweep();});
+// Avisa si queda algo sin confirmar en la nube: errores/conflictos, una serie
+// con guardado retardado, una transacción en marcha o cambios aún sin enviar.
+function hasUnsavedWork(){
+  if(_syncProblems.size>0)return true;
+  if(typeof _logSaveT!=='undefined'&&_logSaveT)return true;
+  try{const sync=getSync();return !!(sync&&sync.hasUnsaved());}catch(e){return true;}
+}
 window.addEventListener('beforeunload',e=>{
-  const pending=_syncProblems.size>0||(typeof _logSaveT!=='undefined'&&_logSaveT);
-  if(pending){e.preventDefault();e.returnValue='';}
+  if(hasUnsavedWork()){e.preventDefault();e.returnValue='';}
 });
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'&&typeof _logSaveT!=='undefined'&&_logSaveT)saveFlush(DATA&&DATA.active&&DATA.active.c);
@@ -3275,10 +3282,16 @@ function ensureDataTracked(ids){
 }
 // Tras una carga completa: lo que ensureData/normNegocio han rellenado no es una edición.
 function markLoadDefaults(){const sync=getSync();if(sync)sync.markDefaults(syncWritableIds(true));}
+// Borra la ficha en la nube. En transacción: sin conexión falla en vez de
+// quedarse en cola y dar el borrado por hecho. Quien llama solo quita el
+// cliente de este dispositivo cuando esto se cumple.
 function deleteClientDoc(cid){
-  if(!window.db)return;
-  clientsCol().doc(cid).delete().then(()=>{const sync=getSync();if(sync)sync.forget(cid);})
-    .catch(e=>{console.warn('delete cliente',cid,e);handleSaveError(e);});
+  if(!window.db)return Promise.resolve();
+  const ref=clientsCol().doc(cid);
+  const tx=window.db.runTransaction(t=>t.get(ref).then(()=>{t.delete(ref);}));
+  let to;
+  const timeout=new Promise((_,rej)=>{to=setTimeout(()=>rej(new Error('timeout')),20000);});
+  return Promise.race([tx,timeout]).finally(()=>clearTimeout(to));
 }
 
 /* CRM en la colección contacts. Con el flag apagado nadie llama a estas funciones. */
@@ -4659,10 +4672,19 @@ function delClient(ev,cid){
  const typed=prompt('Para confirmar, escribe el nombre del cliente tal cual:\n\n'+c.name);
  if(typed===null)return;
  if(normName(typed)!==normName(c.name)){toast('El nombre no coincide. No se ha borrado nada');return}
- delete DATA.clients[cid];
- if(DATA.codes)Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k]&&DATA.codes[k].client===cid)delete DATA.codes[k]});
- if(DATA.active.c===cid){DATA.active={c:null,b:null};UI.home=true}
- deleteClientDoc(cid);save();renderAll();toast('Cliente eliminado');
+ // Primero la nube. Si falla no se toca nada aquí: ni la ficha ni sus códigos de acceso.
+ toast('Eliminando cliente…');
+ deleteClientDoc(cid).then(()=>{
+  delete DATA.clients[cid];
+  if(DATA.codes)Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k]&&DATA.codes[k].client===cid)delete DATA.codes[k]});
+  if(DATA.active.c===cid){DATA.active={c:null,b:null};UI.home=true}
+  const sync=getSync();if(sync)sync.forget(cid);
+  _syncProblems.delete(cid);renderSyncBanner();
+  save();renderAll();toast('Cliente eliminado');
+ }).catch(e=>{
+  console.warn('delete cliente',cid,e);
+  alert('No se ha podido eliminar a '+c.name+' (sin conexión o sin permiso).\n\nNo se ha borrado nada. Inténtalo de nuevo con conexión.');
+ });
 }
 function viewHome(){
  const q=(UI.homeQ||"").toLowerCase();

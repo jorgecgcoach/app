@@ -80,6 +80,8 @@ function fakeServer() {
             const stale = Array.from(read.entries()).some(([id, v]) => (srv.version.get(id) || 0) !== v);
             if (stale) continue; // Firestore reintenta la transacción
             for (const [id, data] of pending) { srv.writes++; srv.put(id, data); }
+            // La escritura llegó, pero la respuesta se pierde (corte, tiempo agotado).
+            if (srv.loseReply) { srv.loseReply = false; const e = new Error('deadline-exceeded'); e.code = 'deadline-exceeded'; throw e; }
             return out;
           }
           throw new Error('demasiados reintentos');
@@ -423,6 +425,165 @@ test('no se recuperan cambios de una pestaña que sigue abierta', () => {
   assert.deepEqual(n.sync.recover(), []);
 });
 
+const pendingKeys = storage => Array.from(storage._map.keys()).filter(k => k.startsWith('jcg_pending:'));
+const copyStorage = storage => { const c = memStorage(); for (const [k, v] of storage._map) c.setItem(k, v); return c; };
+
+test('un journal viejo no resucita un cambio que el usuario ya deshizo', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock });
+  a.load('cli1'); a.sync.heartbeat();
+  srv.online = false;
+  blk(a.local.cli1).exNotes.ex1 = 'Nota escrita por error';
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  srv.online = true;
+  blk(a.local.cli1).exNotes.ex1 = 'Buena técnica'; // lo deshace antes de reconectar
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.deepEqual(pendingKeys(storage), []);
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  assert.deepEqual(n.sync.recover(), []);
+  await tick();
+  assert.equal(blk(srv.get('cli1')).exNotes.ex1, 'Buena técnica');
+  assert.equal(srv.writes, 0);
+});
+
+test('la escritura llegó pero se perdió la respuesta: ni conflicto falso ni journal colgado', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock });
+  const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1'); a.sync.heartbeat();
+  a.listen(); b.listen();
+  blk(a.local.cli1).log['ex2|0'] = { kg: 40, reps: 10 };
+  srv.loseReply = true;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  await tick();
+  assert.deepEqual(blk(srv.get('cli1')).log['ex2|0'], { kg: 40, reps: 10 });
+  assert.ok(!a.statuses.some(x => x.s === 'conflict'));
+  assert.equal(a.sync.hasUnsaved(), false);
+  assert.deepEqual(pendingKeys(storage), []);
+  // Después otro dispositivo corrige esa serie; reabrir A no debe chocar ni deshacerla.
+  blk(b.local.cli1).log['ex2|0'].kg = 45;
+  assert.ok((await b.sync.save('cli1')).ok);
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  assert.deepEqual(n.sync.recover(), []);
+  assert.equal(blk(srv.get('cli1')).log['ex2|0'].kg, 45);
+});
+
+test('varias pestañas cerradas con cambios del mismo cliente: el journal los conserva todos', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  storage.setItem('jcg_pending:muerta1:cli1', JSON.stringify({ at: 1, ops: [{ p: ['blocks', { k: 'id', v: 'm7' }, 'data', 'exNotes', 'ex2'], a: 'de la pestaña 1' }] }));
+  storage.setItem('jcg_pending:muerta2:cli1', JSON.stringify({ at: 2, ops: [{ p: ['name'], b: 'Cliente Ficticio Uno', a: 'Nombre de la pestaña 2' }] }));
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  srv.online = false;
+  assert.deepEqual(n.sync.recover().map(r => r.ok), [true, true]);
+  // La pestaña se cierra justo ahora, antes de que ningún guardado termine.
+  const queda = copyStorage(storage);
+  await tick();
+  srv.online = true;
+  clock.t += 60_000;
+  const m = device(srv, 'M', { storage: queda, clock });
+  m.load('cli1');
+  m.sync.recover();
+  await tick();
+  const final = srv.get('cli1');
+  assert.equal(blk(final).exNotes.ex2, 'de la pestaña 1');
+  assert.equal(final.name, 'Nombre de la pestaña 2');
+});
+
+test('recuperar una entrada de la propia pestaña no la borra', () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const n = device(srv, 'N', { storage });
+  storage.setItem('jcg_pending:N:cli1', JSON.stringify({ at: 1, ops: [{ p: ['name'], b: 'Cliente Ficticio Uno', a: 'Nombre recuperado' }] }));
+  n.load('cli1');
+  srv.online = false;
+  assert.deepEqual(n.sync.recover().map(r => r.ok), [true]);
+  const entry = JSON.parse(storage.getItem('jcg_pending:N:cli1'));
+  assert.deepEqual(entry.ops.map(o => o.a), ['Nombre recuperado']);
+});
+
+test('con un conflicto pendiente, lo que se sigue editando también queda en el journal', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1');
+  blk(b.local.cli1).log['ex1|0'].kg = 65;
+  assert.ok((await b.sync.save('cli1')).ok);
+  blk(a.local.cli1).log['ex1|0'].kg = 62.5;
+  assert.equal((await a.sync.save('cli1')).reason, 'conflict');
+  blk(a.local.cli1).exNotes.ex1 = 'Editada durante el conflicto';
+  assert.equal((await a.sync.save('cli1')).reason, 'conflict');
+  const entry = JSON.parse(storage.getItem('jcg_pending:A:cli1'));
+  const paths = entry.ops.map(o => S.pathLabel(o.p));
+  assert.ok(paths.some(p => /exNotes\.ex1/.test(p)), paths.join(','));
+  assert.ok(paths.some(p => /log\.ex1\|0\.kg/.test(p)), paths.join(','));
+  assert.equal(a.sync.hasUnsaved(), true);
+});
+
+test('hasUnsaved: avisa con cambios reales, guardado en marcha o conflicto; no al solo abrir', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A');
+  a.load('cli1');
+  assert.equal(a.sync.hasUnsaved(), false, 'abrir no es editar');
+  a.sync.absorb(['cli1'], () => { blk(a.local.cli1).weightSnapshots = []; });
+  assert.equal(a.sync.hasUnsaved(), false, 'los rellenos al pintar no cuentan');
+  blk(a.local.cli1).exNotes.ex1 = 'cambio real';
+  assert.equal(a.sync.hasUnsaved(), true, 'cambio sin enviar');
+  const p = a.sync.save('cli1');
+  assert.equal(a.sync.hasUnsaved(), true, 'transacción en marcha');
+  assert.ok((await p).ok);
+  assert.equal(a.sync.hasUnsaved(), false, 'guardado');
+  srv.online = false;
+  blk(a.local.cli1).exNotes.ex1 = 'sin conexión';
+  await a.sync.save('cli1');
+  assert.equal(a.sync.hasUnsaved(), true, 'error de red');
+});
+
+test('cliente borrado en otro dispositivo: ni guardar ni recuperar el journal lo vuelve a crear', async () => {
+  const srv = fakeServer();
+  srv.put('cli1', clienteFicticio());
+  srv.put('cli2', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const b = device(srv, 'B', { storage, clock });
+  b.load('cli1'); b.load('cli2'); b.listen(); b.sync.heartbeat();
+  // B tenía una edición sin terminar de cli1; en cli2 no tenía nada.
+  blk(b.local.cli1).exNotes.ex1 = 'editado en B';
+  srv.online = false;
+  await b.sync.save('cli1');
+  srv.online = true;
+  srv.remove('cli1'); srv.remove('cli2'); // el entrenador los elimina desde A
+  assert.equal(b.local.cli2, undefined, 'sin cambios pendientes desaparece de B');
+  assert.equal(b.sync.isBlocked('cli1'), true, 'con cambios pendientes se bloquea');
+  assert.equal((await b.sync.save('cli1')).reason, 'conflict');
+  const writes = srv.writes;
+  // B se cierra y se vuelve a abrir más tarde.
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1'); n.load('cli2');
+  assert.deepEqual(n.sync.recover(), []);
+  await tick();
+  assert.equal(srv.get('cli1'), null);
+  assert.equal(srv.get('cli2'), null);
+  assert.equal(srv.writes, writes);
+});
+
 test('tiempo real: lo de otro dispositivo llega a memoria y se mezcla con lo pendiente', async () => {
   const srv = fakeServer();
   srv.put('cli1', clienteFicticio());
@@ -674,6 +835,24 @@ test('index.html: navegar y pintar no llaman a save()', () => {
     assert.ok(html.includes(r + '=renderGuard(' + r + ');'), r + ' debe ir envuelto');
   }
   assert.ok(/if\(_renderDepth>0\)return;/.test(html), 'save() debe ignorarse mientras se pinta');
+});
+
+test('index.html: el aviso al cerrar mira el gestor y el borrado espera a la nube', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const unsaved = html.slice(html.indexOf('function hasUnsavedWork()'), html.indexOf("window.addEventListener('beforeunload'"));
+  assert.ok(/sync\.hasUnsaved\(\)/.test(unsaved), 'beforeunload debe contar transacciones en marcha y cambios sin enviar');
+  assert.ok(/_logSaveT/.test(unsaved) && /_syncProblems\.size/.test(unsaved));
+  assert.ok(/addEventListener\('beforeunload',e=>\{\s*if\(hasUnsavedWork\(\)\)/.test(html));
+  const del = html.slice(html.indexOf('function delClient('), html.indexOf('function viewHome('));
+  const then = del.indexOf('deleteClientDoc(cid).then(');
+  assert.ok(then > 0, 'delClient debe esperar al borrado en la nube');
+  for (const s of ['delete DATA.clients[cid]', 'delete DATA.codes[k]', "toast('Cliente eliminado')"]) {
+    assert.ok(del.indexOf(s) > then, s + ' solo tras confirmar el borrado');
+  }
+  assert.ok(/\.catch\(/.test(del.slice(then)), 'el fallo del borrado se avisa');
+  const dc = html.slice(html.indexOf('function deleteClientDoc('), html.indexOf('/* CRM en la colección contacts'));
+  assert.ok(/runTransaction/.test(dc) && !/\.delete\(\)\.then/.test(dc));
+  assert.ok(/journal:sync\.orphans\(\)/.test(html), 'la descarga incluye el journal de pestañas cerradas');
 });
 
 test('index.html: sin set() directos sobre clients, sin persistencia y con el módulo cargado', () => {

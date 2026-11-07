@@ -480,9 +480,16 @@
       return localOps(id, s.base, local);
     }
 
+    // Con el documento bloqueado no se envía nada, pero lo que se siga
+    // editando tiene que sobrevivir a un cierre: al journal.
+    function keepPending(id) {
+      const ops = pendingOps(id);
+      if (ops.length) journal.put(id, ops);
+    }
+
     function save(id) {
       const s = st(id);
-      if (s.blocked) { status(id, 'conflict', s.blocked); return Promise.resolve({ ok: false, reason: 'conflict', conflicts: s.blocked }); }
+      if (s.blocked) { keepPending(id); status(id, 'conflict', s.blocked); return Promise.resolve({ ok: false, reason: 'conflict', conflicts: s.blocked }); }
       if (s.inflight) { s.again = true; return s.inflight; }
       s.inflight = doSave(id).finally(() => {
         s.inflight = null;
@@ -499,7 +506,9 @@
       const sent = clone(local);
       const baseAtStart = s.base;
       const ops = localOps(id, baseAtStart, sent);
-      if (!ops.length) { s.lastError = null; status(id, 'saved'); return { ok: true, noop: true }; }
+      // Nada pendiente (deshecho, o ya llegó aunque se perdiera la respuesta):
+      // un journal anterior ya no vale y al reabrir resucitaría valores viejos.
+      if (!ops.length) { journal.clear(id); s.lastError = null; status(id, 'saved'); return { ok: true, noop: true }; }
       if (jsonSize(sent) > limit) { s.lastError = 'size'; status(id, 'size'); return { ok: false, reason: 'size' }; }
       journal.put(id, ops);
       status(id, 'saving');
@@ -588,6 +597,7 @@
         if (s.base === null) return; // nunca existió en el servidor: nada que hacer
         if (ops.length) {
           s.blocked = [{ path: '(documento)', why: 'borrado en otro dispositivo' }];
+          keepPending(id);
           status(id, 'conflict', s.blocked);
           return;
         }
@@ -599,6 +609,7 @@
       const merged = applyOps(incoming, ops);
       if (merged.conflicts.length) {
         s.blocked = merged.conflicts;
+        keepPending(id);
         status(id, 'conflict', merged.conflicts);
         return;
       }
@@ -625,8 +636,10 @@
           continue;
         }
         cfg.applyLocal(entry.id, merged.doc);
+        // Todo lo pendiente del documento (no solo esta entrada): si hay varias
+        // pestañas cerradas, la última no debe tapar a las anteriores.
         journal.drop(entry.key);
-        journal.put(entry.id, entry.ops);
+        journal.put(entry.id, pendingOps(entry.id));
         report.push({ id: entry.id, ok: true });
         save(entry.id);
       }

@@ -17,7 +17,7 @@ var NAV_NEG_TABS = [
 ];
 var NAV_TITLES = {
   inicio: ['Inicio', 'Resumen del día'],
-  calendario: ['Calendario', 'Tu agenda de la semana'],
+  calendario: ['Calendario', 'Fechas de tus clientes y tu negocio'],
   clientes: ['Clientes', 'Todos tus clientes'],
   biblioteca: ['Biblioteca de ejercicios', 'Ejercicios y vídeos'],
   negocio: ['Negocio', 'Cobros, contratos y métricas'],
@@ -204,7 +204,7 @@ function coachPageRender(v) {
   if (p === 'negocio') {
     v.innerHTML = '<div class="neg-modal neg-page"><div class="neg-tabs" id="negTabs"></div><div class="neg-body" id="negBody"></div></div>';
     try { negPrepare(); renderNegTabs(); renderNegBody(); } catch (e) { console.warn('Negocio:', e); }
-  } else if (p === 'calendario') v.innerHTML = coachViewCalendarioPreview();
+  } else if (p === 'calendario') v.innerHTML = (typeof viewCoachCalendar === 'function') ? viewCoachCalendar() : coachViewCalendarioPreview();
   else if (p === 'biblioteca') v.innerHTML = coachViewBibliotecaPreview();
   else if (p === 'configuracion') v.innerHTML = coachViewConfig();
   else if (p === 'inicio' && typeof viewCoachDashboard === 'function') v.innerHTML = viewCoachDashboard();

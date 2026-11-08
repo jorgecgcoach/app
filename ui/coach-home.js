@@ -88,7 +88,7 @@ function dashData() {
       var b = (c.blocks || []).find(function (x) { return x && x.cur; }) || (c.blocks || [])[0];
       var tr = b && b.data && Array.isArray(b.data.tracking) ? b.data.tracking : [];
       var e = tr.find(function (t) { return t && t.date === lunes && t._submittedAt; });
-      if (e) acc.push({ prio: 3, tipo: 'seg', nombre: c.name, det: 'Envió su seguimiento semanal', d: null, ruta: 'cliente/' + id + '/' + b.id + '/seguimiento', cid: id });
+      if (e) acc.push({ prio: 3, tipo: 'seg', nombre: c.name, det: 'Seguimiento recibido para revisar', d: null, ruta: 'cliente/' + id + '/' + b.id + '/seguimiento', cid: id });
     });
     // Clientes de entrenamiento sin programa en su bloque actual
     Object.keys(DATA.clients || {}).forEach(function (id) {
@@ -140,7 +140,7 @@ function viewCoachDashboard() {
     var pill = '';
     if (a.tipo === 'pago') pill = '<span class="dash-pill ' + (a.d < 0 ? 'p-danger' : a.d <= 2 ? 'p-danger' : 'p-warn') + '">' + dashWhen(a.d) + '</span>';
     else if (a.tipo === 'renov') pill = '<span class="dash-pill p-violet">' + (a.d === 0 ? 'Termina hoy' : 'En ' + a.d + ' d') + '</span>';
-    else if (a.tipo === 'seg') pill = '<span class="dash-pill p-info">Revisar</span>';
+    else if (a.tipo === 'seg') pill = '<span class="dash-pill p-info">Recibido</span>';
     else pill = '<span class="dash-pill p-muted">Programar</span>';
     var amount = a.tipo === 'pago' ? '<span class="dash-amount">' + negEur(a.importe) + '</span>' : '';
     var ic = { pago: 'i-wallet', renov: 'i-phone', seg: 'i-clipboard', prog: 'i-dumbbell' }[a.tipo];
@@ -150,7 +150,7 @@ function viewCoachDashboard() {
   var more = acc.length > MAXA ? '<button type="button" class="dash-link" onclick="UI.dashMore=!UI.dashMore;renderView()">' + (verTodas ? 'Ver menos' : 'Ver las ' + acc.length + ' acciones') + '</button>' : '';
   h += '<div class="dash-cols">';
   h += '<section class="dash-card" aria-labelledby="dashAcc"><div class="dash-card-h"><h3 id="dashAcc">' + dashIc('i-alert') + 'Acciones pendientes' + (acc.length ? '<span class="dash-count">' + acc.length + '</span>' : '') + '</h3>' + more + '</div>' +
-    (acc.length ? '<div class="dash-list">' + accRows + '</div>' : '<div class="dash-none">' + dashIc('i-check') + 'Todo al día: no hay pagos, renovaciones ni seguimientos pendientes.</div>') + '</section>';
+    (acc.length ? '<div class="dash-list">' + accRows + '</div>' : '<div class="dash-none">' + dashIc('i-check') + 'Todo al día: no hay pagos ni renovaciones pendientes, ni seguimientos recibidos esta semana.</div>') + '</section>';
 
   var MAXE = 7;
   var evRows = D.eventos.slice(0, MAXE).map(function (e) {

@@ -16,7 +16,7 @@ var NAV_NEG_TABS = [
   ['pagos', 'Pagos'], ['planes', 'Planes'], ['metricas', 'Métricas'], ['importar', 'Importar']
 ];
 var NAV_TITLES = {
-  inicio: ['Inicio', 'Panel del entrenador'],
+  inicio: ['Inicio', 'Resumen del día'],
   calendario: ['Calendario', 'Tu agenda de la semana'],
   clientes: ['Clientes', 'Todos tus clientes'],
   biblioteca: ['Biblioteca de ejercicios', 'Ejercicios y vídeos'],
@@ -111,6 +111,7 @@ function navGo(ev, r) {
   if (ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1)) return true;
   if (ev) ev.preventDefault();
   if (r.indexOf('negocio/') === 0) { try { negPrepare(); } catch (_) {} }
+  if (r === 'clientes' && UI) UI.homeQ = ''; // desde el menú, Clientes se abre sin la búsqueda anterior
   navTo(r);
   return false;
 }
@@ -206,7 +207,8 @@ function coachPageRender(v) {
   } else if (p === 'calendario') v.innerHTML = coachViewCalendarioPreview();
   else if (p === 'biblioteca') v.innerHTML = coachViewBibliotecaPreview();
   else if (p === 'configuracion') v.innerHTML = coachViewConfig();
-  else v.innerHTML = viewHome(); // inicio y clientes: el panel actual (se rediseña en la etapa 2)
+  else if (p === 'inicio' && typeof viewCoachDashboard === 'function') v.innerHTML = viewCoachDashboard();
+  else v.innerHTML = viewHome(); // Clientes: buscador, filtros y tarjetas de siempre
   navMarkActive();
 }
 

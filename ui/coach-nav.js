@@ -205,7 +205,10 @@ function coachPageRender(v) {
     v.innerHTML = '<div class="neg-modal neg-page"><div class="neg-tabs" id="negTabs"></div><div class="neg-body" id="negBody"></div></div>';
     try { negPrepare(); renderNegTabs(); renderNegBody(); } catch (e) { console.warn('Negocio:', e); }
   } else if (p === 'calendario') v.innerHTML = (typeof viewCoachCalendar === 'function') ? viewCoachCalendar() : coachViewCalendarioPreview();
-  else if (p === 'biblioteca') v.innerHTML = coachViewBibliotecaPreview();
+  else if (p === 'biblioteca') {
+    if (typeof viewCoachLibrary === 'function') { v.innerHTML = viewCoachLibrary(); klRefresh(); }
+    else v.innerHTML = coachViewBibliotecaPreview();
+  }
   else if (p === 'configuracion') v.innerHTML = coachViewConfig();
   else if (p === 'inicio' && typeof viewCoachDashboard === 'function') v.innerHTML = viewCoachDashboard();
   else v.innerHTML = viewHome(); // Clientes: buscador, filtros y tarjetas de siempre

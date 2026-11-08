@@ -9,14 +9,14 @@
      que es como ya lo usa parseMuscles(). Si un nombre no lo trae, el ejercicio
      aparece como «Sin clasificar»: no se deduce nada.
 
-   «Vídeo del entrenador»: PROPUESTA, DESACTIVADA (KLIB_COACH_VIDEO_ON=false).
-   Necesita un campo nuevo `vc` dentro de cada entrada de DATA.exLibrary. Hasta
-   que el usuario lo autorice, el campo se muestra bloqueado y no se escribe nada.
-   La lógica pura (klCoachVideoApply) está lista y probada en
-   ui/coach-library.test.js; nunca toca n, v ni d.
+   «Vídeo del entrenador» (autorizado): campo opcional `vc` dentro de cada entrada
+   de DATA.exLibrary. Se guarda con save() (guardado seguro del META del
+   entrenador, con revisiones y conflictos). Nunca toca n, v ni d. Los
+   entrenamientos de los clientes no se modifican: el selector y la programación
+   lo leen de la biblioteca por nombre. Pruebas: ui/coach-library.test.js.
    ===================================================================== */
 
-var KLIB_COACH_VIDEO_ON = false; // no activar sin autorización expresa
+var KLIB_COACH_VIDEO_ON = true; // autorizado por el usuario (etapa 4)
 var KLIB_PAGE = 60;
 var KLIB_ALIAS = { aductor: 'aductores' }; // misma palabra en singular/plural
 
@@ -48,7 +48,13 @@ function klMerge(builtin, own) {
     if (x && x.n) map.set(String(x.n).trim().toLowerCase(), { n: x.n, v: x.v || '', d: x.d || '', vc: '', own: false });
   });
   (own || []).forEach(function (x) {
-    if (x && x.n) map.set(String(x.n).trim().toLowerCase(), { n: x.n, v: x.v || '', d: x.d || '', vc: x.vc || '', own: true });
+    if (!x || !x.n) return;
+    var k = String(x.n).trim().toLowerCase();
+    var b = map.get(k);
+    // «Tuyo» solo si lo creaste o cambiaste su vídeo general/descripción; una copia
+    // hecha únicamente para guardar tu vídeo no cuenta como ejercicio distinto.
+    var own = !b || b.own || b.v !== (x.v || '') || b.d !== (x.d || '');
+    map.set(k, { n: x.n, v: x.v || '', d: x.d || '', vc: x.vc || '', own: own });
   });
   return Array.from(map.values()).map(function (x) {
     var p = klParse(x.n);
@@ -102,14 +108,19 @@ function klFilter(items, f) {
   return res;
 }
 
-/* PROPUESTA (no activa): devuelve una copia de exLibrary con el vídeo del
-   entrenador puesto o quitado. Nunca cambia n, v ni d de ninguna entrada. */
+/* Pone o quita el vídeo del entrenador (campo `vc`) y devuelve una copia de exLibrary.
+   - Nunca cambia n, v ni d de ninguna entrada.
+   - Si ya hay entrada propia, la cambia EN SU SITIO (la última con ese nombre, que es
+     la que se muestra): el guardado seguro lo trata como un cambio de un solo campo.
+   - Si es un ejercicio de serie, añade AL FINAL una copia {n, v, d, vc} con los datos
+     originales: el guardado seguro lo trata como un añadido y no pisa otros cambios.
+   - Quitar el enlace borra solo `vc`. */
 function klCoachVideoApply(lib, builtin, name, url) {
   var key = String(name || '').trim().toLowerCase();
   url = String(url || '').trim();
-  var out = (lib || []).map(function (x) { return Object.assign({}, x); });
+  var out = (lib || []).map(function (x) { return (x && typeof x === 'object') ? Object.assign({}, x) : x; });
   var hit = null;
-  for (var i = 0; i < out.length; i++) if (out[i] && String(out[i].n || '').trim().toLowerCase() === key) { hit = out[i]; break; }
+  for (var i = out.length - 1; i >= 0; i--) if (out[i] && String(out[i].n || '').trim().toLowerCase() === key) { hit = out[i]; break; }
   if (hit) {
     if (url) hit.vc = url; else delete hit.vc;
     return out;
@@ -119,6 +130,27 @@ function klCoachVideoApply(lib, builtin, name, url) {
   if (!base) return out;
   out.push({ n: base.n, v: base.v || '', d: base.d || '', vc: url });
   return out;
+}
+
+/* Valida un enlace de vídeo. Devuelve {ok, url, msg, embed}. */
+function klValidateUrl(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return { ok: false, msg: 'Pega primero el enlace de tu vídeo.' };
+  if (/\s/.test(s)) return { ok: false, msg: 'El enlace no puede tener espacios. Cópialo de nuevo.' };
+  if (!/^https?:\/\//i.test(s)) {
+    if (/^(www\.|youtu|youtube\.|vimeo\.|drive\.google\.)/i.test(s)) s = 'https://' + s;
+    else return { ok: false, msg: 'El enlace debe empezar por https://' };
+  }
+  var u;
+  try { u = new URL(s); } catch (_) { return { ok: false, msg: 'Ese enlace no es válido. Cópialo de nuevo desde el vídeo.' }; }
+  if (!/^https?:$/.test(u.protocol) || !u.hostname || u.hostname.indexOf('.') < 0) return { ok: false, msg: 'Ese enlace no es válido. Cópialo de nuevo desde el vídeo.' };
+  if (s.length > 2000) return { ok: false, msg: 'El enlace es demasiado largo.' };
+  var host = u.hostname.replace(/^www\.|^m\./, '');
+  var known = /(^|\.)youtube\.com$|^youtu\.be$|(^|\.)vimeo\.com$|^drive\.google\.com$/.test(host);
+  if (/youtube\.com$|youtu\.be$/.test(host) && !/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/.test(s)) {
+    return { ok: false, msg: 'Ese enlace de YouTube no lleva a un vídeo concreto. Usa «Compartir» en el vídeo y copia el enlace.' };
+  }
+  return { ok: true, url: s, embed: known };
 }
 
 /* ---------------- estado y vista ---------------- */
@@ -206,10 +238,19 @@ function klCardHtml(x, idx) {
     ? '<button type="button" class="kl-play gen" onclick="klPlay(' + idx + ',\'v\')">' + '<span class="kl-play-ic">▶</span>Ver vídeo</button>'
     : '<span class="kl-novid">Sin vídeo general</span>';
   var coach;
-  if (KLIB_COACH_VIDEO_ON) {
-    coach = (x.vc ? '<button type="button" class="kl-play coach" onclick="klPlay(' + idx + ',\'vc\')"><span class="kl-play-ic">▶</span>Ver mi vídeo</button>' : '') +
-      '<div class="kl-vc-in"><input type="url" id="klVc' + idx + '" placeholder="Pega el enlace de tu vídeo" value="' + klEsc(x.vc) + '" aria-label="Enlace del vídeo del entrenador">' +
-      '<button type="button" class="ds-btn ds-btn-primary" onclick="klSaveCoachVideo(' + idx + ')">Guardar</button></div>';
+  var editing = klState().edit === x.n.trim().toLowerCase();
+  if (KLIB_COACH_VIDEO_ON && editing) {
+    coach = '<div class="kl-vc-in"><input type="url" inputmode="url" id="klVc' + idx + '" placeholder="Pega el enlace de tu vídeo (YouTube, Vimeo, Drive…)" value="' + klEsc(x.vc) + '" aria-label="Enlace del vídeo del entrenador"' +
+        ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();klSaveCoachVideo(' + idx + ')}else if(event.key===\'Escape\'){klCancel()}" oninput="klErr(' + idx + ',\'\')">' +
+      '<button type="button" class="ds-btn ds-btn-primary" onclick="klSaveCoachVideo(' + idx + ')">Guardar</button>' +
+      '<button type="button" class="ds-btn ds-btn-ghost" onclick="klCancel()">Cancelar</button></div>' +
+      '<span class="kl-err" id="klErr' + idx + '" role="alert"></span>';
+  } else if (KLIB_COACH_VIDEO_ON && x.vc) {
+    coach = '<button type="button" class="kl-play coach" onclick="klPlay(' + idx + ',\'vc\')"><span class="kl-play-ic">▶</span>Ver mi vídeo</button>' +
+      '<div class="kl-vc-acts"><button type="button" class="kl-link" onclick="klEdit(' + idx + ')">Cambiar enlace</button>' +
+      '<button type="button" class="kl-link danger" onclick="klRemoveCoachVideo(' + idx + ')">Quitar</button></div>';
+  } else if (KLIB_COACH_VIDEO_ON) {
+    coach = '<button type="button" class="kl-add" onclick="klEdit(' + idx + ')">＋ Añadir mi vídeo</button>';
   } else {
     coach = '<div class="kl-vc-in locked"><input type="url" placeholder="Pega el enlace de tu vídeo" disabled aria-label="Enlace del vídeo del entrenador (pendiente de autorización)">' +
       '<button type="button" class="ds-btn ds-btn-secondary" disabled>Guardar</button></div>' +
@@ -276,21 +317,66 @@ function klPlay(idx, field) {
   if (typeof showVideo === 'function') showVideo(x[field], (field === 'vc' ? 'Tu vídeo · ' : '') + (x.base || x.n));
 }
 
-/* Guardado del vídeo del entrenador: bloqueado hasta autorización. */
+/* ---------------- vídeo del entrenador: añadir, cambiar, quitar ---------------- */
+function klEdit(idx) {
+  var x = KLIB.res[idx]; if (!x) return;
+  klState().edit = x.n.trim().toLowerCase();
+  klRefresh();
+  setTimeout(function () { var el = document.getElementById('klVc' + idx); if (el) { el.focus(); try { el.select(); } catch (_) {} } }, 30);
+}
+function klCancel() { klState().edit = null; klRefresh(); }
+function klErr(idx, msg) {
+  var e = document.getElementById('klErr' + idx);
+  if (e) e.textContent = msg || '';
+  var el = document.getElementById('klVc' + idx);
+  if (el) { el.classList.toggle('bad', !!msg); el.setAttribute('aria-invalid', msg ? 'true' : 'false'); }
+}
+/* Aviso de error (el toast general siempre pone «✓»). */
+function klToastErr(m) {
+  var t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = '⚠ ' + m;
+  t.classList.add('show', 'kl-bad');
+  clearTimeout(t._);
+  t._ = setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.classList.remove('kl-bad'); }, 300); }, 3200);
+}
+function klBuiltin() { return (typeof EXLIB !== 'undefined' && Array.isArray(EXLIB)) ? EXLIB : []; }
+function klCommit(name, url) {
+  DATA.exLibrary = klCoachVideoApply(DATA.exLibrary || [], klBuiltin(), name, url);
+  save(); // guardado seguro de siempre: META del entrenador, revisiones y conflictos
+  klState().edit = null;
+  klLoad(); klRefresh();
+}
 function klSaveCoachVideo(idx) {
-  if (!KLIB_COACH_VIDEO_ON) { if (typeof toast === 'function') toast('El vídeo del entrenador aún no está activado'); return; }
+  if (!KLIB_COACH_VIDEO_ON) { klToastErr('El vídeo del entrenador no está activado'); return; }
   var x = KLIB.res[idx];
   var el = document.getElementById('klVc' + idx);
   if (!x || !el) return;
-  var url = String(el.value || '').trim();
-  if (url && !/^https?:\/\//i.test(url)) { toast('Pega un enlace que empiece por https://'); return; }
-  var builtin = (typeof EXLIB !== 'undefined' && Array.isArray(EXLIB)) ? EXLIB : [];
-  DATA.exLibrary = klCoachVideoApply(DATA.exLibrary || [], builtin, x.n, url);
-  save();
-  klLoad(); klRefresh();
-  toast(url ? 'Vídeo del entrenador guardado' : 'Vídeo del entrenador quitado');
+  var r = klValidateUrl(el.value);
+  if (!r.ok) { klErr(idx, r.msg); klToastErr(r.msg); el.focus(); return; }
+  if (r.url === x.vc) { klCancel(); toast('El enlace no ha cambiado'); return; }
+  var had = !!x.vc;
+  klCommit(x.n, r.url);
+  toast((had ? 'Vídeo del entrenador actualizado' : 'Vídeo del entrenador guardado') + (r.embed ? '' : ' (se abrirá en una pestaña aparte)'));
+}
+function klRemoveCoachVideo(idx) {
+  var x = KLIB.res[idx];
+  if (!x || !x.vc) return;
+  if (!confirm('¿Quitar tu vídeo de «' + (x.base || x.n) + '»?\n\nEl vídeo general del ejercicio no se toca.')) return;
+  klCommit(x.n, '');
+  toast('Vídeo del entrenador quitado');
+}
+/* Para el selector y la programación: tu vídeo de un ejercicio, por nombre (solo lectura). */
+function libCoachVideoByName(name) {
+  var key = String(name || '').trim().toLowerCase();
+  if (!key || typeof DATA === 'undefined' || !DATA || !Array.isArray(DATA.exLibrary)) return '';
+  for (var i = DATA.exLibrary.length - 1; i >= 0; i--) {
+    var x = DATA.exLibrary[i];
+    if (x && String(x.n || '').trim().toLowerCase() === key) return x.vc ? String(x.vc).trim() : '';
+  }
+  return '';
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { klParse: klParse, klMerge: klMerge, klGroups: klGroups, klFilter: klFilter, klCoachVideoApply: klCoachVideoApply, klMuscleKey: klMuscleKey };
+  module.exports = { klParse: klParse, klMerge: klMerge, klGroups: klGroups, klFilter: klFilter, klCoachVideoApply: klCoachVideoApply, klMuscleKey: klMuscleKey, klValidateUrl: klValidateUrl };
 }

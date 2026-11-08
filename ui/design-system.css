@@ -573,3 +573,23 @@ body:not(.client-mode){background:var(--ds-bg)}
   .kl-play{height:40px}
   .kl-vc-in input,.kl-vc-in .ds-btn{height:44px}
 }
+
+/* Etapa 4 — Vídeo del entrenador (activado) */
+.kl-vrow.coach{row-gap:8px}
+.kl-add{display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:999px;font-size:13px;font-weight:700;color:var(--ds-teal-deep);background:#fff;border:1px dashed var(--ds-teal)}
+.kl-add:hover{background:var(--ds-teal-soft)}
+.kl-vc-acts{display:flex;gap:4px;width:100%}
+.kl-link{font-size:13px;font-weight:600;color:var(--ds-navy);padding:6px 8px;border-radius:var(--ds-r-sm)}
+.kl-link:hover{background:rgba(255,255,255,.7)}
+.kl-link.danger{color:var(--ds-danger);margin-left:auto}
+.kl-vc-in .ds-btn-ghost{padding:0 10px}
+.kl-vc-in input:focus{outline:0;border-color:var(--ds-teal);box-shadow:0 0 0 3px rgba(84,190,189,.18)}
+.kl-vc-in input.bad{border-color:var(--ds-danger);box-shadow:0 0 0 3px rgba(226,59,59,.12)}
+.kl-err{display:block;width:100%;font-size:12.5px;font-weight:600;color:var(--ds-danger)}
+.kl-err:empty{display:none}
+@media(max-width:640px){.kl-vc-in{flex-wrap:wrap}.kl-vc-in input{flex:1 1 100%}.kl-vc-in .ds-btn{flex:1}.kl-add{height:40px}}
+/* Selector de ejercicios y programación (solo entrenador): tu vídeo en azul marino */
+.epi-vidbtn.coach{color:#fff;background:var(--ds-navy,#0C3B3B)}
+.prog-vid-btn.coach{background:var(--ds-navy,#0C3B3B);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;gap:2px;font-size:.8rem}
+.prog-vid-btn.coach small{font-size:.55rem;font-weight:800;letter-spacing:.02em;text-transform:uppercase;opacity:.85}
+#toast.kl-bad{background:var(--ds-danger,#E23B3B);color:#fff}

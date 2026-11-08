@@ -1658,10 +1658,10 @@ html,body{overflow-x:clip}
 <script src="shared/client-catalog.js?v=20261109-c1"></script>
 <script src="shared/campos-cliente.js?v=20261111-c1b"></script>
 <script src="auth/code-identity.js?v=20261111-c1"></script>
-<script src="ui/coach-nav.js?v=20261108-e4"></script>
-<script src="ui/coach-home.js?v=20261108-e4"></script>
-<script src="ui/coach-calendar.js?v=20261108-e4"></script>
-<script src="ui/coach-library.js?v=20261108-e4"></script>
+<script src="ui/coach-nav.js?v=20261108-e5"></script>
+<script src="ui/coach-home.js?v=20261108-e5"></script>
+<script src="ui/coach-calendar.js?v=20261108-e5"></script>
+<script src="ui/coach-library.js?v=20261108-e5"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -1878,7 +1878,7 @@ if(typeof firebase === 'undefined'){
 .neg-date2{padding:5px 6px;border:1.5px solid var(--line);border-radius:8px;font-weight:700;color:#0C3B3B;font-size:13px;font-family:inherit;background:#fff}
 .neg-date2:focus{outline:0;border-color:#54BEBD}
 </style>
-<link rel="stylesheet" href="ui/design-system.css?v=20261108-e4">
+<link rel="stylesheet" href="ui/design-system.css?v=20261108-e5">
 </head>
 <body>
 <script>
@@ -3005,7 +3005,8 @@ try{EXLIB=JSON.parse(document.getElementById("exlibData").textContent)||[]}catch
 function exLibAll(){
  const map=new Map();
  EXLIB.forEach(x=>map.set((x.n||'').trim().toLowerCase(),{n:x.n,v:x.v||'',d:x.d||'',own:false}));
- (DATA.exLibrary||[]).forEach(x=>{if(x&&x.n)map.set((x.n||'').trim().toLowerCase(),{n:x.n,v:x.v||'',d:x.d||'',own:true})});
+ // Tus ejercicios mandan. Si solo añaden tu vídeo (vc) a uno de serie, no cuentan como «tuyo».
+ (DATA.exLibrary||[]).forEach(x=>{if(!x||!x.n)return;const k=(x.n||'').trim().toLowerCase();const b=map.get(k);const own=!b||b.own||b.v!==(x.v||'')||b.d!==(x.d||'');map.set(k,{n:x.n,v:x.v||'',d:x.d||'',vc:x.vc||'',own})});
  return Array.from(map.values());
 }
 function exNameParts(name){const i=String(name||'').indexOf(' - ');if(i<0)return {base:String(name||''),musc:''};return {base:name.slice(0,i),musc:name.slice(i+3)}}
@@ -3038,9 +3039,10 @@ function exPickerFilter(q){
    const vid=x.v
      ? `<span class="epi-vidbtn has" onclick="event.stopPropagation();openLibVideo(${i})" title="Ver o cambiar el vídeo">▶ vídeo</span>`
      : `<span class="epi-vidbtn add" onclick="event.stopPropagation();openLibVideo(${i})" title="Añadir un vídeo">＋ vídeo</span>`;
+   const mine=x.vc?`<span class="epi-vidbtn coach" onclick="event.stopPropagation();exPickCoachVideo(${i})" title="Ver tu vídeo">▶ mi vídeo</span>`:'';
    const own=x.own?'<span class="epi-own" title="Tuyo">★</span>':'';
    const desc=x.d?`<div class="epi-desc">${escapeHtml(x.d)}</div>`:'';
-   return `<button type="button" class="expick-item" onclick="exPick(${i})"><div class="epi-top"><b>${escapeHtml(p.base)}</b>${vid}${own}</div>${p.musc?`<div class="epi-musc">${escapeHtml(p.musc)}</div>`:''}${desc}</button>`;
+   return `<button type="button" class="expick-item" onclick="exPick(${i})"><div class="epi-top"><b>${escapeHtml(p.base)}</b>${vid}${mine}${own}</div>${p.musc?`<div class="epi-musc">${escapeHtml(p.musc)}</div>`:''}${desc}</button>`;
  }).join('');
  if(total>EXPICK_RESULTS.length)html+=`<div class="expick-more">Mostrando ${EXPICK_RESULTS.length} de ${total}. Escribe para afinar la búsqueda…</div>`;
  box.innerHTML=html;
@@ -3055,6 +3057,7 @@ function exApplyToSlot(item){
  save();closeExPicker();renderView();toast("Ejercicio asignado");
 }
 function exPick(i){const item=EXPICK_RESULTS[i];if(item)exApplyToSlot(item)}
+function exPickCoachVideo(i){const item=EXPICK_RESULTS[i];if(item&&item.vc)showVideo(item.vc,'Tu vídeo · '+exNameParts(item.n).base)}
 function exPickFree(){const q=($("#exPickSearch").value||'').trim();if(!q)return;exApplyToSlot({n:q,v:'',d:''})}
 function exLibAddToggle(){const af=$("#exPickAddForm");if(!af)return;const show=af.style.display==="none";af.style.display=show?"block":"none";if(show){const nm=$("#exAddName");const q=($("#exPickSearch").value||'').trim();if(nm){nm.value=q;nm.focus()}}}
 function exLibAddSave(){
@@ -3063,8 +3066,9 @@ function exLibAddSave(){
  const v=($("#exAddUrl").value||'').trim();
  const d=($("#exAddDesc").value||'').trim();
  const key=n.toLowerCase();
+ const prevVc=((DATA.exLibrary||[]).filter(x=>(x.n||'').trim().toLowerCase()===key).pop()||{}).vc;
  DATA.exLibrary=(DATA.exLibrary||[]).filter(x=>(x.n||'').trim().toLowerCase()!==key);
- DATA.exLibrary.push({n,v,d});
+ DATA.exLibrary.push(prevVc?{n,v,d,vc:prevVc}:{n,v,d});
  save();
  exApplyToSlot({n,v,d});
 }
@@ -3072,6 +3076,7 @@ function exLibAddSave(){
 let EXVID={mode:null,i:-1,di:-1,ei:-1,name:''};
 function openLibVideo(i){const item=EXPICK_RESULTS[i];if(!item)return;EXVID={mode:'lib',i,name:item.n};$("#exVidTitle").textContent=item.n;$("#exVidIn").value=item.v||'';$("#exVidScrim").classList.add("open");setTimeout(()=>{const el=$("#exVidIn");if(el){el.focus();try{el.select()}catch(e){}}},60)}
 function openSlotVideo(di,ei){const ex=blockProgram().weeks[UI.week-1].days[di].exs[ei];if(!ex)return;EXVID={mode:'slot',di,ei,name:ex.n||''};$("#exVidTitle").textContent=ex.n||'Ejercicio';$("#exVidIn").value=ex.yt||libVideoByName(ex.n)||'';$("#exVidScrim").classList.add("open");setTimeout(()=>{const el=$("#exVidIn");if(el){el.focus();try{el.select()}catch(e){}}},60)}
+function openSlotCoachVideo(di,ei){const ex=blockProgram().weeks[UI.week-1].days[di].exs[ei];if(!ex)return;const u=libCoachVideoByName(ex.n);if(u)showVideo(u,'Tu vídeo · '+exNameParts(ex.n).base)}
 function closeExVid(){$("#exVidScrim").classList.remove("open")}
 function saveExVid(){
  const url=($("#exVidIn").value||'').trim();
@@ -3080,8 +3085,9 @@ function saveExVid(){
   const key=(EXVID.name||'').trim().toLowerCase();
   const prev=(DATA.exLibrary||[]).find(x=>(x.n||'').trim().toLowerCase()===key);
   const d=prev?prev.d:((EXPICK_RESULTS[EXVID.i]||{}).d||'');
+  const prevVc=((DATA.exLibrary||[]).filter(x=>(x.n||'').trim().toLowerCase()===key).pop()||{}).vc;
   DATA.exLibrary=(DATA.exLibrary||[]).filter(x=>(x.n||'').trim().toLowerCase()!==key);
-  DATA.exLibrary.push({n:EXVID.name,v:url,d});
+  DATA.exLibrary.push(prevVc?{n:EXVID.name,v:url,d,vc:prevVc}:{n:EXVID.name,v:url,d});
   save();closeExVid();exPickerFilter(($("#exPickSearch")?$("#exPickSearch").value:'')||'');toast(url?"Vídeo guardado en la biblioteca":"Vídeo quitado");
  }else if(EXVID.mode==='slot'){
   const ex=blockProgram().weeks[UI.week-1].days[EXVID.di].exs[EXVID.ei];if(!ex)return;
@@ -6371,6 +6377,7 @@ function progExEditor(di,ei,ex){
    <span class="ex-num">${ei+1}</span>
    <button type="button" class="prog-exname prog-exname-btn${ex.n?'':' ph'}" onclick="openExPicker(${di},${ei})">${ex.n?escapeHtml(ex.n):'＋ Elegir ejercicio de la biblioteca…'}</button>
    ${ex.n?`<button type="button" class="prog-vid-btn${exVideoUrl(ex)?'':' novid'}" onclick="openSlotVideo(${di},${ei})" title="${exVideoUrl(ex)?'Ver o cambiar el vídeo':'Añadir vídeo a este ejercicio'}">${exVideoUrl(ex)?'▶':'＋🎬'}</button>`:''}
+   ${ex.n&&typeof libCoachVideoByName==='function'&&libCoachVideoByName(ex.n)?`<button type="button" class="prog-vid-btn coach" onclick="openSlotCoachVideo(${di},${ei})" title="Ver tu vídeo (Biblioteca)" aria-label="Ver tu vídeo">▶<small>tuyo</small></button>`:''}
    <span class="ex-moves"><button class="ex-mv" onclick="progMoveEx(${di},${ei},-1)" ${ei===0?'disabled':''} title="Subir">▲</button><button class="ex-mv" onclick="progMoveEx(${di},${ei},1)" ${ei===nEx-1?'disabled':''} title="Bajar">▼</button></span>
    <button class="dcat-del" onclick="progDelEx(${di},${ei})" title="Quitar">✕</button></div>`;
  if(ex.desc)m+=`<div class="prog-exdesc">ℹ️ ${escapeHtml(ex.desc)}</div>`;

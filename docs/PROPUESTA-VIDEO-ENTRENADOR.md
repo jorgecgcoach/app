@@ -1,27 +1,27 @@
-# Propuesta: «Vídeo del entrenador» en la Biblioteca (pendiente de autorización)
+# «Vídeo del entrenador» en la Biblioteca (ACTIVADO con autorización del usuario)
 
-## Situación actual
-- Ejercicios de serie: JSON incrustado en `index.html` (`#exlibData`), 1.109 entradas `{n, v, d}`
-  (n = «Nombre - Músculos», v = vídeo general, d = descripción). Solo lectura.
-- Ejercicios propios: `DATA.exLibrary` (documento META del entrenador), entradas `{n, v, d}`.
-  Si el nombre coincide, sustituyen a la entrada de serie.
-- No existe ningún campo para un segundo vídeo.
+## Datos
+- Ejercicios de serie: JSON incrustado en `index.html` (`#exlibData`), entradas `{n, v, d}`. Solo lectura.
+- Ejercicios propios: `DATA.exLibrary` (documento META `clients/coach_data`), entradas `{n, v, d}`
+  y, desde ahora, el campo opcional **`vc`** (vídeo del entrenador).
+- Si un ejercicio de serie recibe tu vídeo, se añade al final de `exLibrary` una copia `{n, v, d, vc}`
+  con los mismos `n`, `v` y `d`. Se muestra una sola vez (se une por nombre) y no se marca como «tuyo».
+- Cambiar tu vídeo cambia solo `vc` en su sitio; quitarlo borra solo `vc`.
 
-## Cambio propuesto
-- Campo nuevo opcional **`vc`** (vídeo del entrenador) dentro de cada entrada de `DATA.exLibrary`.
-- Al guardar un vídeo propio en un ejercicio de serie se crea una copia `{n, v, d, vc}` con los
-  mismos `n`, `v` y `d` del original: el vídeo general y la descripción no cambian.
-- Quitar el enlace borra solo `vc`.
-- Se guarda con el `save()` de siempre (sistema de guardado seguro), sin tocar `shared/safe-save.js`,
-  las reglas de Firestore ni crear colecciones. Las reglas actuales no validan el contenido de
-  `exLibrary`, así que no hace falta cambiarlas.
+## Guardado
+- Con el `save()` de siempre → `shared/safe-save.js` (sin modificar): revisiones `_rev`, transacción,
+  mezcla de cambios que no chocan y bloqueo con aviso cuando chocan.
+- No se han cambiado las reglas de Firestore ni se ha creado ninguna colección.
 
-## Estado
-- Código preparado en `ui/coach-library.js` (`klCoachVideoApply`, `klSaveCoachVideo`) detrás de
-  `KLIB_COACH_VIDEO_ON = false`. Con el interruptor apagado el campo se ve bloqueado y no escribe nada.
-- Pruebas: `node --test ui/coach-library.test.js` (incluye que `n`, `v` y `d` no cambian).
+## Dónde se usa
+- Biblioteca: añadir, cambiar y quitar, con validación del enlace.
+- Selector de ejercicios de la programación: botón «▶ mi vídeo» (azul marino) junto al rojo.
+- Editor de programación (entrenador): botón «▶ TUYO» junto al rojo, leído de la biblioteca por nombre.
+  Los entrenamientos de los clientes NO se modifican.
+- Modo cliente: sin cambios (el cliente sigue viendo el vídeo general).
 
-## Para activarlo (solo con autorización)
-1. Poner `KLIB_COACH_VIDEO_ON = true`.
-2. Probar en el emulador con datos ficticios.
-3. Decidir después si el cliente ve el vídeo del entrenador antes que el general (otra fase).
+## Pruebas
+- `node --test ui/coach-library.test.js` (10 pruebas, incluidas dos con el guardado seguro real).
+- `npm run test:guardado` (54 pruebas).
+- Emulador con datos ficticios: persistencia tras recargar, segundo dispositivo, combinación de
+  cambios y conflicto bloqueado (ver informe de la etapa 4).

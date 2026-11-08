@@ -17,7 +17,7 @@
 <meta name="theme-color" content="#0C3B3B">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Baloo+2:wght@500;600;700;800&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
 <style>
 :root{
   --navy:#0C3B3B; --navy-2:#0F4A4A; --teal:#54BEBD; --teal-deep:#2C9E9D;
@@ -1658,6 +1658,7 @@ html,body{overflow-x:clip}
 <script src="shared/client-catalog.js?v=20261109-c1"></script>
 <script src="shared/campos-cliente.js?v=20261111-c1b"></script>
 <script src="auth/code-identity.js?v=20261111-c1"></script>
+<script src="ui/coach-nav.js?v=20261108-e1"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -1874,6 +1875,7 @@ if(typeof firebase === 'undefined'){
 .neg-date2{padding:5px 6px;border:1.5px solid var(--line);border-radius:8px;font-weight:700;color:#0C3B3B;font-size:13px;font-family:inherit;background:#fff}
 .neg-date2:focus{outline:0;border-color:#54BEBD}
 </style>
+<link rel="stylesheet" href="ui/design-system.css?v=20261108-e1">
 </head>
 <body>
 <script>
@@ -1947,6 +1949,27 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <div class="login-foot"></div>
   </div>
 </div>
+<!-- Iconos de línea del menú (24×24, trazo de 1,75; estilo Feather/Lucide, licencia MIT) -->
+<svg class="ds-sprite" aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9v11a1 1 0 0 0 1 1H10v-6h4v6h3.5a1 1 0 0 0 1-1V9"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20.5c.6-3.6 3.2-5.6 6.5-5.6s5.9 2 6.5 5.6"/><path d="M15.5 4.7a3.5 3.5 0 0 1 0 6.6M17.8 15.2c2 .7 3.3 2.4 3.7 5.3"/></symbol>
+    <symbol id="i-dumbbell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5v11M17.5 6.5v11M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20.5h17"/><path d="M6.5 16.5v-5M11.5 16.5v-9M16.5 16.5V4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5.5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2H9"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2.5 9.5 5-9.5 5-9.5-5z"/><path d="m2.5 16.5 9.5 5 9.5-5M2.5 12l9.5 5 9.5-5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5s8-3.8 8-9.8V5.2l-8-2.7-8 2.7v6.5c0 6 8 9.8 8 9.8z"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M16 7l3 3M18.5 4.5l2 2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10.5 6-3.5v10l-6-3.5"/></symbol>
+  </defs>
+</svg>
 <div class="app">
   <!-- SIDEBAR -->
   <aside class="side" id="side">
@@ -1956,17 +1979,44 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
         <polygon points="22,7 36,15.5 36,32.5 22,41 8,32.5 8,15.5" fill="#2b2b2b"/>
         <text x="22" y="29" font-family="Baloo 2" font-size="14" font-weight="800" fill="#54BEBD" text-anchor="middle">JC</text>
       </svg>
-      <div>
-        <div class="bn">JORGECGCOACH</div>
-        <div class="bs">Personal Training</div>
+      <div class="brand-tx">
+        <div class="bn">Jorge CG Coach</div>
+        <div class="bs">Panel del entrenador</div>
       </div>
     </div>
-    <div class="lbl">Tus clientes</div>
-    <div class="clients" id="clients"></div>
-    <button class="add-btn" onclick="openAdd()">＋ Añadir bloque</button>
+    <!-- Menú principal del entrenador (ui/coach-nav.js marca la sección activa) -->
+    <nav class="ds-nav" id="dsNav" aria-label="Menú principal">
+      <a class="ds-nav-item" href="#inicio" data-page="inicio" onclick="return navGo(event,'inicio')" title="Inicio"><svg class="ds-ic"><use href="#i-home"/></svg><span class="ds-nav-tx">Inicio</span></a>
+      <a class="ds-nav-item" href="#calendario" data-page="calendario" onclick="return navGo(event,'calendario')" title="Calendario"><svg class="ds-ic"><use href="#i-calendar"/></svg><span class="ds-nav-tx">Calendario</span></a>
+      <div class="ds-nav-group" data-group="clientes">
+        <div class="ds-nav-row">
+          <a class="ds-nav-item" href="#clientes" data-page="clientes" onclick="return navGo(event,'clientes')" title="Clientes"><svg class="ds-ic"><use href="#i-users"/></svg><span class="ds-nav-tx">Clientes</span><span class="ds-nav-count" id="navClientCount"></span></a>
+          <button class="ds-nav-exp" type="button" onclick="navToggle('clientes')" aria-label="Mostrar u ocultar la lista de clientes"><svg class="ds-ic"><use href="#i-chevron"/></svg></button>
+        </div>
+        <div class="ds-nav-sub ds-nav-clients">
+          <div class="clients" id="clients"></div>
+          <button class="add-btn" onclick="openAdd()"><svg class="ds-ic"><use href="#i-plus"/></svg> Añadir bloque</button>
+        </div>
+      </div>
+      <div class="ds-nav-group" data-group="biblioteca">
+        <div class="ds-nav-row">
+          <a class="ds-nav-item" href="#biblioteca" data-page="biblioteca" onclick="return navGo(event,'biblioteca')" title="Biblioteca de ejercicios"><svg class="ds-ic"><use href="#i-dumbbell"/></svg><span class="ds-nav-tx">Biblioteca de ejercicios</span></a>
+        </div>
+        <div class="ds-nav-sub">
+          <a class="ds-nav-subitem" href="#biblioteca" data-page="biblioteca" data-sub="ejercicios" onclick="return navGo(event,'biblioteca')">Ejercicios</a>
+          <button class="ds-nav-subitem" type="button" onclick="navCloseDrawer();openLibrary()">Plantillas</button>
+        </div>
+      </div>
+      <div class="ds-nav-group" data-group="negocio">
+        <div class="ds-nav-row">
+          <a class="ds-nav-item" href="#negocio/resumen" data-page="negocio" onclick="return navGo(event,'negocio/resumen')" title="Negocio"><svg class="ds-ic"><use href="#i-chart"/></svg><span class="ds-nav-tx">Negocio</span></a>
+        </div>
+        <div class="ds-nav-sub" id="navNegSub"></div>
+      </div>
+      <a class="ds-nav-item" href="#configuracion" data-page="configuracion" onclick="return navGo(event,'configuracion')" title="Configuración"><svg class="ds-ic"><use href="#i-settings"/></svg><span class="ds-nav-tx">Configuración</span></a>
+    </nav>
     <div class="side-foot">
-      <button class="tool-gear" id="toolGear" onclick="openCoachCodeModal()" title="Ajustes de entrenador">⚙️ Ajustes</button>
-      <button class="logout-link" onclick="logout()">Cerrar sesión</button>
+      <button class="logout-link" onclick="logout()" title="Cerrar sesión"><svg class="ds-ic"><use href="#i-logout"/></svg><span class="ds-nav-tx">Cerrar sesión</span></button>
     </div>
   </aside>
   <div class="scrim-side" id="scrimSide" onclick="closeSide()"></div>
@@ -1974,8 +2024,8 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
   <!-- MAIN -->
   <main class="main">
     <div class="topbar">
-      <button class="burger" onclick="toggleSide()" aria-label="Mostrar u ocultar la barra lateral" title="Mostrar/ocultar clientes">☰</button>
-      <button class="backbtn" id="backBtn" onclick="openHome()" title="Volver al panel">← Volver</button>
+      <button class="burger" onclick="toggleSide()" aria-label="Mostrar u ocultar la barra lateral" title="Mostrar/ocultar el menú"><svg class="ds-ic"><use href="#i-menu"/></svg></button>
+      <button class="backbtn" id="backBtn" onclick="openHome()" title="Volver al panel"><svg class="ds-ic"><use href="#i-back"/></svg><span>Volver</span></button>
       <label class="who-av" id="whoAv" style="display:none" title="Cambiar foto"><span id="whoAvInner"></span><span class="who-cam">📷</span><input type="file" accept="image/*" onchange="setActivePhoto(this)"></label>
       <div class="who">
         <h1 id="whoName"></h1>
@@ -4242,11 +4292,22 @@ function negMonthRange(){const C=negContracts();if(!C.length){const t=negYm(negT
 
 /* ---- modal ---- */
 let NEG={tab:"resumen",month:null,_preview:null,payYear:"all"};
-function openNegocio(){
-  if(!isCoach())return;
+/* Prepara los datos de Negocio (lo que antes hacía openNegocio antes de pintar). */
+function negPrepare(){
   NEGO();
   try{if(ensureNegContacts())save();}catch(e){console.warn('CRM migración:',e);}
   if(NEG.month===null){const t=negYm(negToday());const r=negMonthRange();NEG.month=(t>=r[0]&&t<=r[r.length-1])?t:r[r.length-1];}
+}
+/* Negocio es ahora una pantalla del menú (#negocio/<apartado>), con los mismos apartados y funciones. */
+function openNegocio(){
+  if(!isCoach())return;
+  negPrepare();
+  navTo('negocio/'+(NEG.tab||'resumen'));
+}
+/* Versión anterior en ventana emergente: se conserva por si se necesita volver a ella. */
+function openNegocioModal(){
+  if(!isCoach())return;
+  negPrepare();
   let m=$("#negScrim");
   if(!m){m=document.createElement('div');m.id='negScrim';m.className='scrim open';
     m.innerHTML='<div class="neg-modal">'
@@ -4258,8 +4319,8 @@ function openNegocio(){
   }else{m.classList.add('open');}
   renderNegTabs();renderNegBody();
 }
-function closeNegocio(){const m=$("#negScrim");if(m)m.classList.remove('open');}
-function negGo(t){NEG.tab=t;renderNegTabs();renderNegBody();}
+function closeNegocio(){const m=$("#negScrim");if(m)m.classList.remove('open');if(UI&&UI.home&&UI.page==='negocio')openHome();}
+function negGo(t){NEG.tab=t;renderNegTabs();renderNegBody();if(UI&&UI.home&&UI.page==='negocio'){navSync();renderTop();}}
 function renderNegTabs(){
   const tabs=[["resumen","📊 Resumen"],["contratos","📋 Contratos"],["crm","👥 CRM"],["renov","🔔 Renovaciones"],["pagos","💶 Pagos"],["planes","🗂️ Planes"],["metricas","📈 Métricas"],["importar","⬆️ Importar"]];
   $("#negTabs").innerHTML=tabs.map(t=>`<button class="neg-tab${NEG.tab===t[0]?' on':''}" onclick="negGo('${t[0]}')">${t[1]}</button>`).join("");
@@ -4489,7 +4550,7 @@ function negCoachAlerts(){
   const pend=negContracts().map(c=>({c,d:negDaysTo(negProx(c))})).filter(o=>negSaldo(o.c)>0&&o.d<=14&&!negIsFrozen(o.c)).sort((a,b)=>a.d-b.d);
   return {renov,pend,av};
 }
-function openNegocioRenov(){openNegocio();NEG.tab='renov';renderNegTabs();renderNegBody();}
+function openNegocioRenov(){if(!isCoach())return;negPrepare();NEG.tab='renov';navTo('negocio/renov');}
 /* Notificación local al abrir la app (sin backend). Se repite 1 vez al día,
    o antes si cambia el nº de avisos. Requiere permiso de notificaciones concedido. */
 function coachMaybeNotifyRenovaciones(){
@@ -4789,7 +4850,7 @@ function renderTop(){
  $("#backBtn").style.display=(isCoach()&&!UI.home)?'grid':'none';
  const av=$("#whoAv");
  if(!isCoach()&&(UI.fichaIntake||UI.monthlyReview)){const cc=DATA.clients[DATA.active.c];$("#whoName").textContent=cc?cc.name:"Bienvenido";$("#whoBlock").textContent=UI.monthlyReview?"Valoración mensual":"Formulario inicial";$("#weeks").innerHTML="";if(av)av.style.display='none';return;}
- if(isCoach()&&UI.home){$("#whoName").textContent="Tus clientes";$("#whoBlock").textContent="Panel del entrenador";$("#weeks").innerHTML="";if(av)av.style.display='none';return;}
+ if(isCoach()&&UI.home){const pt=coachPageTitle();$("#whoName").textContent=pt[0];$("#whoBlock").textContent=pt[1];$("#weeks").innerHTML="";if(av)av.style.display='none';return;}
  if(isCoach()&&!UI.home&&UI.tab==='valoracion'){const cc=DATA.clients[DATA.active.c];if(cc){$("#whoName").textContent=cc.name;$("#whoBlock").textContent="Valoración de espalda";$("#weeks").innerHTML="";if(av){av.style.display='grid';$("#whoAvInner").innerHTML=avatarInner(cc)}return;}}
  if(!isCoach()&&UI.home){const cc=DATA.clients[DATA.active.c];$("#whoName").textContent=cc?cc.name:"JorgeCGCoach";$("#whoBlock").textContent="Inicio";$("#weeks").innerHTML="";if(av){if(cc){av.style.display='grid';$("#whoAvInner").innerHTML=avatarInner(cc)}else av.style.display='none'}return;}
  const c=DATA.clients[DATA.active.c],b=blk();
@@ -4809,6 +4870,8 @@ function setActivePhoto(inp){const f=inp.files[0];if(!f)return;const cid=DATA.ac
 function curMods(){const c=DATA.clients[DATA.active.c];return (c&&c.mods)||defaultMods()}
 function visibleSections(){const m=curMods();const st=curServiceType();const coachOnly={programa:1,carga:1,fichas:1,valoracion:1};const clientOnly={};return SECTIONS.filter(s=>{if(!serviceAllows(s.k,st))return false;if(clientOnly[s.k])return isCoach()?false:m[s.k]!==false;if(coachOnly[s.k])return isCoach()?true:m[s.k]===true;return m[s.k]!==false})}
 function renderTabs(){
+ const _bn=$("#botnav");if(_bn)_bn.classList.remove("ds-botnav");
+ if(isCoach()&&UI.home){$("#tabs").innerHTML="";coachBotnavRender(_bn);return;}
  if(UI.home||(!isCoach()&&(UI.fichaIntake||UI.monthlyReview))){$("#tabs").innerHTML="";const bn=$("#botnav");bn.innerHTML="";bn.style.display="none";return;}
  const secs=visibleSections();
  if(secs.length&&!secs.find(s=>s.k===UI.tab))UI.tab=secs[0].k;
@@ -4903,7 +4966,7 @@ function medidasReminderBar(){
 }
 
 /* ===================== PANEL DEL ENTRENADOR (inicio) ===================== */
-function openHome(){UI.home=true;UI.homeQ="";UI._navAnim=true;renderAll();window.scrollTo({top:0})}
+function openHome(){UI.home=true;UI.page="inicio";UI.homeQ="";UI._navAnim=true;renderAll();window.scrollTo({top:0})}
 function openClient(cid){const c=DATA.clients[cid];if(!c)return;if(!c.blocks.length){if((c.serviceType||null)==='back_rehab'){openClientValoracion(cid);return}openAdd();$("#addClient").value=c.name;toast("Este cliente no tiene bloques. Crea el primero");return}
  DATA.active={c:cid,b:(c.blocks.find(b=>b.cur)||c.blocks[0]).id};persistActive();UI.home=false;reset()}
 // Abre la ficha del cliente directamente en la Valoración de espalda, tenga o no mesociclos.
@@ -4956,7 +5019,7 @@ function viewHome(){
  const act=all.filter(([id,c])=>!c.archived), arch=all.filter(([id,c])=>c.archived);
  let h=`<div class="home-head"><input class="home-search" placeholder="🔍 Buscar cliente…" value="${(UI.homeQ||'').replace(/"/g,'&quot;')}" oninput="homeSearch(this.value)"><button class="home-backup" onclick="openBackup()" title="Copia de seguridad" style="margin-left:8px;flex:0 0 auto;background:#0C3B3B;color:#fff;border:none;border-radius:12px;padding:0 14px;font-weight:700;cursor:pointer;white-space:nowrap">🛟 Copia</button><button class="home-backup" onclick="openLibrary()" title="Biblioteca de plantillas" style="margin-left:8px;flex:0 0 auto;background:#54BEBD;color:#0C3B3B;border:none;border-radius:12px;padding:0 14px;font-weight:700;cursor:pointer;white-space:nowrap">📚 Biblioteca</button><button class="neg-home-btn" onclick="openNegocio()" title="Negocio: cobros, renovaciones y cuentas">📊 Negocio</button></div>`;
  const _al=negCoachAlerts();
- if(_al.renov.length||_al.pend.length){
+ if(UI.page!=="clientes"&&(_al.renov.length||_al.pend.length)){
   const MAXROWS=6;const rows=[];
   _al.renov.forEach(o=>rows.push(`<div style="display:flex;align-items:baseline;gap:7px;padding:3px 0"><span style="flex:0 0 auto">\u{1F4DE}</span><div>Videollamada de cierre con <b>${escapeHtml(o.c.nombre)}</b> · acaba el ${negFmt(negFin(o.c))} <span style="color:#9a6a08">· ${o.d===0?'hoy':o.d+' d'}</span></div></div>`));
   _al.pend.forEach(o=>rows.push(`<div style="display:flex;align-items:baseline;gap:7px;padding:3px 0"><span style="flex:0 0 auto">\u{1F4B6}</span><div>Pago de <b>${escapeHtml(o.c.nombre)}</b> · <b>${negEur(negSaldo(o.c))}</b> · vence el ${negFmt(negProx(o.c))} <span style="color:#9a6a08">· ${o.d<0?'vencido':(o.d===0?'hoy':o.d+' d')}</span></div></div>`));
@@ -5211,7 +5274,7 @@ function setupForegroundNotifications(){
 }
 /* ---- Notificaciones push del ENTRENADOR (pagos y renovaciones) ---- */
 function coachPush(){const neg=NEGO();if(!neg.coachPush||typeof neg.coachPush!=='object')neg.coachPush={enabled:false,tokens:[]};if(!Array.isArray(neg.coachPush.tokens))neg.coachPush.tokens=[];return neg.coachPush;}
-function coachNotifRefresh(){const sc=$("#negScrim");if(sc&&sc.classList.contains('open')&&typeof NEG!=='undefined'&&NEG&&NEG.tab==='renov')renderNegBody();}
+function coachNotifRefresh(){const sc=$("#negScrim");if(((sc&&sc.classList.contains('open'))||(UI&&UI.home&&UI.page==='negocio'&&$("#negBody")))&&typeof NEG!=='undefined'&&NEG&&NEG.tab==='renov')renderNegBody();}
 async function enableCoachNotifications(){
   if(!notifSupported()){toast('Este navegador no admite notificaciones');return;}
   if(!vapidReady()){toast('Falta configurar la clave de notificaciones');return;}
@@ -5294,7 +5357,8 @@ function renderView(){
  const keepScroll=()=>{if(_vchg)window.scrollTo({top:0});else window.scrollTo(0,_vy);};
  if(!isCoach()&&UI.fichaIntake){v.innerHTML=viewFichaIntake();applyFx(v,fx);keepScroll();requestAnimationFrame(initSignaturePad);return;}
  if(!isCoach()&&UI.monthlyReview){v.innerHTML=viewMonthlyReview();applyFx(v,fx);keepScroll();return;}
- if(isCoach()&&UI.home){v.innerHTML=viewHome();applyFx(v,fx);return;}
+ if(isCoach())navSync();
+ if(isCoach()&&UI.home){coachPageRender(v);applyFx(v,fx);return;}
  if(isCoach()&&UI.tab==="valoracion"){v.innerHTML=viewValoracion();applyFx(v,fx);keepScroll();return;}
  if(!blk()){v.innerHTML=`<div class="sec-head"><h2>Bienvenido</h2><p>Selecciona o añade un bloque de entrenamiento para empezar.</p></div>`;applyFx(v,fx);return;}
  if(!isCoach()&&UI.home){v.className="wrap chome-wrap";v.innerHTML=viewClientHome();maybeHabitNudge();maybeDietNudge();return;}

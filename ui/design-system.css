@@ -1,0 +1,192 @@
+/* =====================================================================
+   JorgeCGCoach — Sistema de diseño (etapa 1: menú y navegación)
+   Se carga DESPUÉS de los estilos de index.html. Todo lo nuevo usa el
+   prefijo ds- o se limita al modo entrenador (body:not(.client-mode)),
+   así el modo cliente se ve exactamente igual que antes.
+   ===================================================================== */
+:root{
+  /* Marca */
+  --ds-navy:#0C3B3B; --ds-navy-2:#0F4A4A; --ds-navy-3:#0A3130;
+  --ds-teal:#54BEBD; --ds-teal-deep:#2C9E9D; --ds-teal-soft:#E6F5F4;
+  /* Neutros */
+  --ds-bg:#F5F8F8; --ds-surface:#FFFFFF; --ds-line:#E3ECEB; --ds-line-2:#D5E2E1;
+  --ds-ink:#13302F; --ds-ink-2:#5B7574; --ds-ink-3:#8AA09F;
+  /* Estados (con su tono suave para tarjetas) */
+  --ds-ok:#27AE73; --ds-ok-soft:#E8F6EF;
+  --ds-warn:#E8A020; --ds-warn-soft:#FDF3E2;
+  --ds-danger:#E23B3B; --ds-danger-soft:#FDECEC;
+  --ds-info:#3B6FD9; --ds-info-soft:#EAF1FD;
+  --ds-call:#7B5CC9; --ds-call-soft:#F1EDFB;
+  /* Tipografía */
+  --ds-font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --ds-fs-xs:12px; --ds-fs-sm:13px; --ds-fs-md:14px; --ds-fs-base:16px; --ds-fs-lg:18px;
+  --ds-fs-xl:22px; --ds-fs-2xl:28px; --ds-fs-3xl:34px;
+  /* Espaciado (escala de 4 px) */
+  --ds-1:4px; --ds-2:8px; --ds-3:12px; --ds-4:16px; --ds-5:20px; --ds-6:24px; --ds-8:32px; --ds-10:40px;
+  /* Radios y sombras */
+  --ds-r-sm:8px; --ds-r:12px; --ds-r-lg:16px; --ds-r-xl:20px;
+  --ds-shadow:0 1px 2px rgba(12,59,59,.04),0 4px 16px rgba(12,59,59,.06);
+  --ds-shadow-lg:0 16px 48px rgba(12,59,59,.16);
+  /* Estructura */
+  --ds-side-w:272px; --ds-rail-w:76px;
+}
+
+/* ---------- Tipografía del armazón del entrenador ---------- */
+body:not(.client-mode) .side,
+body:not(.client-mode) .topbar,
+body:not(.client-mode) .botnav.ds-botnav,
+body:not(.client-mode) .ds-page{font-family:var(--ds-font);font-feature-settings:"cv11","ss01"}
+.ds-ic{width:20px;height:20px;flex:none;display:block}
+
+/* ---------- Estructura general ---------- */
+body:not(.client-mode) .app{grid-template-columns:var(--ds-side-w) 1fr}
+@media(max-width:900px){body:not(.client-mode) .app{grid-template-columns:1fr}}
+@media(min-width:901px){
+  body.side-collapsed:not(.client-mode) .app{grid-template-columns:var(--ds-rail-w) 1fr}
+  body.side-collapsed:not(.client-mode) .side{pointer-events:auto;overflow:visible}
+}
+
+/* ---------- Barra lateral ---------- */
+body:not(.client-mode) .side{
+  background:linear-gradient(180deg,var(--ds-navy) 0%,var(--ds-navy-3) 100%);color:#D7ECEB;
+  padding:20px 14px;padding-top:calc(20px + env(safe-area-inset-top));padding-bottom:calc(14px + env(safe-area-inset-bottom));
+  gap:14px;
+}
+body:not(.client-mode) .brand{padding:2px 6px 16px;gap:12px;border-bottom:1px solid rgba(255,255,255,.08)}
+body:not(.client-mode) .brand .hex{width:38px;height:42px}
+body:not(.client-mode) .brand .bn{font-family:var(--ds-font);font-weight:700;font-size:17px;letter-spacing:-.01em;color:#fff;line-height:1.2}
+body:not(.client-mode) .brand .bs{font-family:var(--ds-font);font-size:12px;letter-spacing:0;text-transform:none;color:#8CC9C7;font-weight:500;margin-top:2px}
+
+.ds-nav{display:flex;flex-direction:column;gap:4px;flex:1;min-height:0;overflow-y:auto;margin:0 -6px;padding:2px 6px;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent}
+.ds-nav::-webkit-scrollbar{width:8px}.ds-nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:4px}
+.ds-nav-item{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 12px;border-radius:var(--ds-r);
+  color:#CFE6E5;text-decoration:none;font-size:15px;font-weight:500;flex:none;min-width:0;transition:background .15s,color .15s}
+.ds-nav-row .ds-nav-item{flex:1 1 auto}
+.ds-nav-item:hover{background:rgba(255,255,255,.06);color:#fff}
+.ds-nav-item.on{background:rgba(84,190,189,.20);color:#fff;font-weight:600}
+.ds-nav-item.on .ds-ic{color:var(--ds-teal)}
+.ds-nav-tx{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ds-nav-count{margin-left:auto;font-size:12px;font-weight:600;color:#A9D5D3;background:rgba(255,255,255,.08);padding:1px 8px;border-radius:999px}
+.ds-nav-count:empty{display:none}
+.ds-nav-row{display:flex;align-items:center;gap:2px}
+.ds-nav-exp{width:36px;height:36px;border-radius:var(--ds-r-sm);display:grid;place-items:center;color:#8CC9C7;flex:none}
+.ds-nav-exp:hover{background:rgba(255,255,255,.06);color:#fff}
+.ds-nav-exp .ds-ic{width:18px;height:18px;transition:transform .2s}
+.ds-nav-group.open .ds-nav-exp .ds-ic{transform:rotate(180deg)}
+.ds-nav-sub{display:none;flex-direction:column;gap:2px;padding:4px 0 6px 44px}
+.ds-nav-group.open .ds-nav-sub{display:flex}
+.ds-nav-subitem{display:flex;align-items:center;min-height:36px;padding:0 12px;border-radius:var(--ds-r-sm);color:#B5D9D7;
+  text-decoration:none;font-size:14px;font-weight:500;text-align:left;font-family:inherit;width:100%}
+.ds-nav-subitem:hover{background:rgba(255,255,255,.06);color:#fff}
+.ds-nav-subitem.on{background:var(--ds-teal);color:var(--ds-navy);font-weight:600}
+
+/* Lista de clientes dentro del grupo «Clientes» (misma lista y acciones que antes) */
+.ds-nav-clients{padding-left:8px}
+body:not(.client-mode) .ds-nav .clients{overflow-y:auto;max-height:min(42vh,360px);flex:none;margin:0;padding:2px 4px 2px 0;gap:6px;min-height:0;scrollbar-width:thin}
+body:not(.client-mode) .ds-nav .cl{background:rgba(255,255,255,.04);border-radius:var(--ds-r)}
+body:not(.client-mode) .ds-nav .cl-head{padding:9px 10px;font-family:var(--ds-font);font-size:14px;font-weight:600;color:#E6F3F2}
+body:not(.client-mode) .ds-nav .cl-head .av{width:28px;height:28px;border-radius:8px;font-family:var(--ds-font);font-weight:700;font-size:12px}
+body:not(.client-mode) .ds-nav .blk{font-size:13px;font-weight:500}
+body:not(.client-mode) .ds-nav .blk.active{font-weight:600}
+body:not(.client-mode) .ds-nav .arch-folder{margin-top:8px;font-size:13px;font-weight:600}
+body:not(.client-mode) .ds-nav .add-btn{margin-top:6px;padding:10px;border-radius:var(--ds-r);font-family:var(--ds-font);font-size:14px;font-weight:600;
+  background:rgba(84,190,189,.12);border:1px dashed rgba(84,190,189,.45);color:#CFEEED}
+body:not(.client-mode) .ds-nav .add-btn .ds-ic{width:18px;height:18px}
+
+/* Pie: cerrar sesión */
+body:not(.client-mode) .side-foot{border-top:1px solid rgba(255,255,255,.08);padding-top:10px;text-align:left}
+body:not(.client-mode) .side-foot .logout-link{display:flex;align-items:center;gap:12px;width:100%;min-height:42px;padding:0 12px;border-radius:var(--ds-r);
+  color:#A9CFCD;text-decoration:none;font-size:14px;font-weight:500;margin:0}
+body:not(.client-mode) .side-foot .logout-link:hover{background:rgba(255,255,255,.06);color:#fff}
+
+/* Barra plegada a iconos (botón de menú en ordenador) */
+@media(min-width:901px){
+  body.side-collapsed:not(.client-mode) .side{padding-left:12px;padding-right:12px;align-items:stretch}
+  body.side-collapsed:not(.client-mode) .brand{justify-content:center;padding-left:0;padding-right:0}
+  body.side-collapsed:not(.client-mode) .brand-tx,
+  body.side-collapsed:not(.client-mode) .ds-nav-tx,
+  body.side-collapsed:not(.client-mode) .ds-nav-count,
+  body.side-collapsed:not(.client-mode) .ds-nav-exp,
+  body.side-collapsed:not(.client-mode) .ds-nav-sub{display:none!important}
+  body.side-collapsed:not(.client-mode) .ds-nav-item,
+  body.side-collapsed:not(.client-mode) .side-foot .logout-link{justify-content:center;padding:0}
+  body.side-collapsed:not(.client-mode) .ds-nav{margin:0;padding:0}
+}
+
+/* Cajón en móvil y tablet vertical */
+@media(max-width:900px){
+  body:not(.client-mode) .side{width:86%;max-width:320px;box-shadow:var(--ds-shadow-lg)}
+  body:not(.client-mode) .scrim-side{background:rgba(10,40,40,.45);backdrop-filter:blur(2px)}
+}
+
+/* ---------- Barra superior ---------- */
+body:not(.client-mode) .topbar{background:rgba(255,255,255,.9);border-bottom:1px solid var(--ds-line);gap:12px;min-height:68px}
+body:not(.client-mode) .burger{width:40px;height:40px;border-radius:var(--ds-r);background:transparent;color:var(--ds-navy);border:1px solid var(--ds-line)}
+body:not(.client-mode) .burger:hover{background:var(--ds-teal-soft)}
+body:not(.client-mode) .who h1{font-family:var(--ds-font);font-size:20px;font-weight:700;letter-spacing:-.01em;color:var(--ds-navy)}
+body:not(.client-mode) .who p{font-size:13px;font-weight:500;color:var(--ds-ink-2)}
+body:not(.client-mode) .backbtn{align-items:center;gap:6px;height:40px;padding:0 14px 0 10px;border-radius:var(--ds-r);background:var(--ds-surface);
+  border:1px solid var(--ds-line);color:var(--ds-navy);font-family:var(--ds-font);font-size:14px;font-weight:600;margin-left:0}
+body:not(.client-mode) .backbtn[style*="grid"]{display:inline-flex!important}
+body:not(.client-mode) .backbtn:hover{background:var(--ds-teal-soft)}
+body:not(.client-mode) .backbtn .ds-ic{width:18px;height:18px}
+@media(max-width:560px){body:not(.client-mode) .backbtn span{display:none}body:not(.client-mode) .backbtn{padding:0 10px}}
+
+/* ---------- Barra inferior del entrenador (móvil) ---------- */
+.botnav.ds-botnav{justify-content:space-around;padding:6px 6px calc(6px + env(safe-area-inset-bottom));gap:2px;
+  border-top:1px solid var(--ds-line);box-shadow:0 -4px 16px rgba(12,59,59,.06);overflow:visible}
+.botnav.ds-botnav button{flex:1 1 0;min-width:0;min-height:52px;justify-content:center;gap:4px;border-radius:var(--ds-r);
+  font-family:var(--ds-font);font-size:11px;font-weight:600;color:var(--ds-ink-2);padding:4px 2px}
+.botnav.ds-botnav button .ds-ic{width:22px;height:22px}
+.botnav.ds-botnav button.on{color:var(--ds-teal-deep);background:var(--ds-teal-soft)}
+
+/* ---------- Pantallas del entrenador ---------- */
+body:not(.client-mode) .wrap.ds-page{max-width:1120px}
+body:not(.client-mode) .wrap.ds-page-negocio{max-width:1200px;padding-top:0}
+@media(max-width:900px){body:not(.client-mode) .wrap.ds-page{padding:16px 16px 96px}body:not(.client-mode) .wrap.ds-page-negocio{padding-top:0}}
+
+/* Negocio como pantalla: mismos apartados, sin ventana emergente */
+.neg-modal.neg-page{background:transparent;box-shadow:none;border:0;max-width:none;width:auto;max-height:none;overflow:visible;padding:0}
+.neg-page .neg-tabs{position:sticky;top:68px;z-index:15;background:var(--ds-bg,#F5F8F8);margin:0 -22px;padding:8px 22px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;
+  border-bottom:1px solid var(--ds-line)}
+.neg-page .neg-tabs::-webkit-scrollbar{display:none}
+.neg-page .neg-tab{font-family:var(--ds-font);font-size:14px;font-weight:600;white-space:nowrap;padding:12px 12px 10px}
+.neg-page .neg-body{padding:18px 0 28px}
+@media(max-width:900px){.neg-page .neg-tabs{margin:0 -16px;padding:4px 16px 0}}
+
+/* Botones */
+.ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;border-radius:var(--ds-r);
+  font-family:var(--ds-font);font-size:14px;font-weight:600;border:1px solid transparent;cursor:pointer;transition:background .15s,border-color .15s}
+.ds-btn .ds-ic{width:18px;height:18px}
+.ds-btn-primary{background:var(--ds-navy);color:#fff}.ds-btn-primary:hover{background:var(--ds-navy-2)}
+.ds-btn-secondary{background:var(--ds-surface);color:var(--ds-navy);border-color:var(--ds-line-2)}.ds-btn-secondary:hover{background:var(--ds-teal-soft)}
+.ds-btn-ghost{background:transparent;color:var(--ds-navy)}.ds-btn-ghost:hover{background:var(--ds-teal-soft)}
+.ds-btn-danger{background:var(--ds-danger);color:#fff}
+@media(max-width:640px){.ds-btn{height:44px}}
+
+/* Estado vacío / pantalla en preparación */
+.ds-empty{background:var(--ds-surface);border:1px solid var(--ds-line);border-radius:var(--ds-r-lg);box-shadow:var(--ds-shadow);
+  padding:40px 28px;text-align:center;max-width:640px;margin:24px auto}
+.ds-empty-ic{width:56px;height:56px;border-radius:16px;background:var(--ds-teal-soft);color:var(--ds-teal-deep);display:grid;place-items:center;margin:0 auto 16px}
+.ds-empty-ic .ds-ic{width:28px;height:28px}
+.ds-empty h2{font-family:var(--ds-font);font-size:var(--ds-fs-xl);font-weight:700;color:var(--ds-navy);margin:0 0 8px;letter-spacing:-.01em}
+.ds-empty p{font-size:15px;color:var(--ds-ink);margin:0 0 8px;line-height:1.55}
+.ds-muted{color:var(--ds-ink-2)!important;font-size:14px!important}
+.ds-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+
+/* Configuración */
+.ds-settings{display:flex;flex-direction:column;gap:10px;max-width:720px}
+.ds-setting{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--ds-surface);border:1px solid var(--ds-line);
+  border-radius:var(--ds-r-lg);box-shadow:var(--ds-shadow);padding:14px 16px;font-family:var(--ds-font);transition:border-color .15s}
+.ds-setting:hover{border-color:var(--ds-teal)}
+.ds-setting-ic{width:42px;height:42px;border-radius:12px;background:var(--ds-teal-soft);color:var(--ds-teal-deep);display:grid;place-items:center;flex:none}
+.ds-setting-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ds-setting-tx b{font-size:15px;font-weight:600;color:var(--ds-ink)}
+.ds-setting-tx span{font-size:13px;color:var(--ds-ink-2)}
+.ds-setting-go{transform:rotate(-90deg);color:var(--ds-ink-3)}
+.ds-setting.danger .ds-setting-ic{background:var(--ds-danger-soft);color:var(--ds-danger)}
+.ds-setting.danger b{color:var(--ds-danger)}
+
+/* Fondo del armazón del entrenador */
+body:not(.client-mode){background:var(--ds-bg)}

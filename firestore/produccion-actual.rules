@@ -1,0 +1,15 @@
+rules_version = '2';
+// RÉPLICA, SOLO PARA PRUEBAS, de las reglas que hoy tiene producción (no se despliega nunca).
+// Fuente: docs/firestore-auth.md («allow read, write: if true en clients/{clientId}») y las
+// comprobaciones anónimas de la auditoría (clients/* legible; otras colecciones, 403).
+// Sirve para demostrar en el emulador qué puede hacer un visitante sin identificarse.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /clients/{clientId} {
+      allow read, write: if true;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

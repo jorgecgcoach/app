@@ -6,9 +6,13 @@
     "test": "firebase emulators:exec --only firestore --project demo-appjorgecgcoach \"node --test auth/code-identity.test.js firestore/rules.test.js firestore/safe-save-rules.test.js scripts/migrate-client-auth.test.js\"",
     "test:identity": "node --test auth/code-identity.test.js scripts/migrate-client-auth.test.js",
     "test:guardado": "node --test shared/safe-save.test.js",
+    "test:seguridad": "firebase emulators:exec --only firestore,storage --project demo-jcg-seguridad --config firebase.seguridad.json \"node --test firestore/exposicion.test.js firestore/catalogo.test.js firestore/storage-rules.test.js firestore/rules.test.js firestore/safe-save-rules.test.js\"",
+    "test:unidad": "node --test shared/safe-save.test.js shared/client-catalog.test.js auth/code-identity.test.js scripts/migrate-client-auth.test.js negocio-avisos.test.js shared/negocio-alert-rules.test.js shared/job-report.test.js notify/notify.test.js",
     "e2e:emulador": "cd e2e && firebase emulators:start --only firestore --project demo-jcg-e2e --config firebase.e2e.json",
     "e2e:sembrar": "node e2e/emu.js seed",
     "e2e:servir": "node e2e/serve.js",
+    "e2e:emulador-auth": "firebase emulators:start --only firestore,auth --project demo-jcg-e2e --config firebase.e2e-auth.json",
+    "e2e:emulador-lan": "cd e2e && firebase emulators:start --only firestore --project demo-jcg-e2e --config firebase.e2e-lan.json",
     "migrate:dry-run": "node scripts/migrate-client-auth.js --backup scripts/fixtures/backup.sample.json"
   },
   "devDependencies": {

@@ -1931,6 +1931,12 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
       <div id="coachGoogleBlock" style="display:none">
       <p>Entra con la cuenta de Google del entrenador.</p>
       <button class="login-btn" type="button" onclick="submitCoach(this)">Entrar con Google</button>
+      <details id="coachPwdBlock" style="margin-top:14px;text-align:left">
+        <summary style="cursor:pointer;font-size:.85rem;opacity:.8">¿Google no funciona (iPhone)? Entrar con correo y contraseña de respaldo</summary>
+        <input id="coachEmailIn" type="email" autocomplete="username" placeholder="Correo de tu cuenta de Google" style="margin-top:10px">
+        <input id="coachPwdIn" type="password" autocomplete="current-password" placeholder="Contraseña de respaldo" onkeydown="if(event.key==='Enter')submitCoachPassword(this.nextElementSibling)">
+        <button class="login-btn" type="button" onclick="submitCoachPassword(this)">Entrar con contraseña</button>
+      </details>
       </div>
       <button class="coach-link" onclick="showClientLogin()">← Volver</button>
     </div>
@@ -3671,6 +3677,7 @@ function openBackup(){
    +'<div style="border-top:1px solid #eee;margin:0 0 12px"></div>'
    +'<p style="font-size:.85rem;opacity:.8;margin:0 0 8px">Mueve a la nube las fotos antiguas que aún estén dentro de los perfiles. Alivia el peso de los datos y permite subir fotos sin límite.</p>'
    +'<button id="migPhotosBtn" class="primary" style="width:100%;margin-bottom:14px;background:#54BEBD" onclick="migratePhotosToStorage()">☁️ Mover fotos a la nube</button>'
+   +(AUTH_ENABLED?'<button class="primary navy" style="width:100%;margin-bottom:14px" onclick="closeBackup();openCoachBackupAccess()">🔐 Acceso de respaldo (iPhone)</button>':'')
    +'<button style="width:100%;background:#eee;border:none;padding:10px;border-radius:10px;cursor:pointer" onclick="closeBackup()">Cerrar</button></div>';
   document.body.appendChild(d);
 }
@@ -8649,9 +8656,13 @@ async function loadClientAfterAuthReal(user,gen){
   afterDataLoaded();
   return DATA;
 }
+function isClientAuthEmail(email){
+  const dom=window.JcgAuthIdentity&&window.JcgAuthIdentity.DOMAIN;
+  return !!(email&&dom&&String(email).toLowerCase().endsWith('@'+dom));
+}
 async function continueFromAuthUser(user){
   const google=(user.providerData||[]).some(p=>p.providerId==='google.com');
-  if(google) return loadCoachDataAfterAuth(user);
+  if(google||(user.email&&!isClientAuthEmail(user.email))) return loadCoachDataAfterAuth(user);
   return loadClientAfterAuth(user);
 }
 async function initAppWithAuth(){
@@ -8752,6 +8763,79 @@ async function submitCoachWithAuth(btn){
     SESSION=null; Store.set('jcg_session', null);
     setBtnLoading(btn,false);
     toast((e&&e.userMessage)||'No se ha podido entrar con Google.','bad');
+  }
+}
+/* ---- Acceso de RESPALDO del entrenador (C1) ----
+   En el iPhone (sobre todo con la app en la pantalla de inicio) Google puede fallar. El respaldo es una
+   contraseña VINCULADA a la misma cuenta de Google del entrenador: mismo usuario (UID), así que las
+   reglas lo reconocen como entrenador sin dar acceso a nadie más. Se configura una vez desde el
+   ordenador, entrando con Google. La contraseña solo la escribe el entrenador; no se guarda en la app. */
+async function submitCoachPassword(btn){
+  const email=($("#coachEmailIn").value||'').trim();
+  const pwd=$("#coachPwdIn").value||'';
+  if(!email||!pwd){toast('Escribe el correo y la contraseña de respaldo','bad');return;}
+  if(isClientAuthEmail(email)){toast('Ese correo no es el del entrenador','bad');return;}
+  setBtnLoading(btn,true,'Entrando…');
+  try{
+    await ensureAuthReady();
+    const cred=await firebase.auth().signInWithEmailAndPassword(email,pwd);
+    $("#coachPwdIn").value='';
+    await loadCoachDataAfterAuth(cred.user);
+    UI.home=true; UI._navAnim=true;
+    renderGate(); renderAll();
+    toast('Bienvenido, Jorge');
+  }catch(e){
+    console.warn('[auth] entrenador (respaldo)', (e&&e.code)||'error');
+    SESSION=null; Store.set('jcg_session', null);
+    try{ await firebase.auth().signOut(); }catch(_){}
+    setBtnLoading(btn,false);
+    const c=e&&e.code;
+    const red=e&&(e._abandoned||/Timeout/.test(String(e.message||''))||c==='auth/network-request-failed'||c==='unavailable');
+    toast((e&&e.userMessage)||(c==='auth/too-many-requests'?'Demasiados intentos. Espera un poco y prueba otra vez.':red?'No se ha podido conectar. Revisa la conexión.':'Correo o contraseña no válidos.'),'bad');
+  }
+}
+function coachHasBackupPassword(){
+  const u=firebase.auth&&firebase.auth().currentUser;
+  return !!(u&&(u.providerData||[]).some(p=>p.providerId==='password'));
+}
+function openCoachBackupAccess(){
+  if(!AUTH_ENABLED||!SESSION||SESSION.role!=='coach'){toast('Solo para el entrenador con la sesión iniciada','bad');return;}
+  const u=firebase.auth().currentUser;
+  if(!u||!u.email){toast('Entra con tu cuenta de Google para configurarlo','bad');return;}
+  const ya=coachHasBackupPassword();
+  closeCoachBackupAccess();
+  const d=document.createElement('div');d.id='coachBackupScrim';d.className='scrim open';
+  d.innerHTML='<div class="modal" style="max-width:420px"><h3 style="margin:0 0 6px">🔐 Acceso de respaldo</h3>'
+    +'<p style="font-size:.85rem;margin:0 0 10px">Para entrar en el iPhone si Google falla: tu correo <b>'+escapeHtml(u.email)+'</b> y una contraseña. Es tu misma cuenta; nadie más gana acceso. '+(ya?'Ya tienes una contraseña de respaldo: aquí puedes cambiarla.':'Todavía no tienes contraseña de respaldo.')+'</p>'
+    +'<input id="cbPwd1" type="password" autocomplete="new-password" placeholder="Contraseña (mínimo 12 caracteres)" style="width:100%;margin-bottom:8px">'
+    +'<input id="cbPwd2" type="password" autocomplete="new-password" placeholder="Repite la contraseña" style="width:100%;margin-bottom:12px">'
+    +'<button class="primary" style="width:100%;margin-bottom:8px" onclick="saveCoachBackupAccess(this)">'+(ya?'Cambiar contraseña':'Crear contraseña de respaldo')+'</button>'
+    +'<button style="width:100%;background:#eee;border:none;padding:10px;border-radius:10px;cursor:pointer" onclick="closeCoachBackupAccess()">Cerrar</button></div>';
+  document.body.appendChild(d);
+}
+function closeCoachBackupAccess(){const m=document.getElementById('coachBackupScrim');if(m)m.remove();}
+async function saveCoachBackupAccess(btn){
+  const p1=$("#cbPwd1").value||'',p2=$("#cbPwd2").value||'';
+  if(p1.length<12){toast('Mínimo 12 caracteres','bad');return;}
+  if(p1!==p2){toast('Las dos contraseñas no coinciden','bad');return;}
+  const u=firebase.auth().currentUser;
+  if(!u||!u.email){toast('La sesión ha caducado: vuelve a entrar con Google','bad');return;}
+  btn.disabled=true;
+  try{
+    // updatePassword sobre la cuenta de Google le añade (o cambia) la contraseña: mismo usuario (UID).
+    // Probado en el emulador de Auth; linkWithCredential con el mismo correo da email-already-in-use.
+    await u.updatePassword(p1);
+    closeCoachBackupAccess();
+    toast('Acceso de respaldo listo. Pruébalo en el iPhone.');
+  }catch(e){
+    btn.disabled=false;
+    const c=e&&e.code;
+    console.warn('[auth] respaldo', c||'error');
+    toast(c==='auth/requires-recent-login'?'Por seguridad, cierra sesión, vuelve a entrar con Google y repítelo.'
+      :c==='auth/operation-not-allowed'?'Falta activar «Correo/contraseña» en Firebase Authentication.'
+      :c==='auth/weak-password'?'Contraseña demasiado débil.'
+      :c==='auth/credential-already-in-use'||c==='auth/email-already-in-use'?'Ya existe otra cuenta con ese correo y contraseña: no se ha vinculado. Avisa antes de seguir.'
+      :'No se ha podido guardar. Inténtalo de nuevo.','bad');
   }
 }
 function logoutWithAuth(){

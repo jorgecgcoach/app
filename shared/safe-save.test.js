@@ -82,6 +82,8 @@ function fakeServer() {
             for (const [id, data] of pending) { srv.writes++; srv.put(id, data); }
             // La escritura llegó, pero la respuesta se pierde (corte, tiempo agotado).
             if (srv.loseReply) { srv.loseReply = false; const e = new Error('deadline-exceeded'); e.code = 'deadline-exceeded'; throw e; }
+            // La escritura llegó y la respuesta llega, pero tarde (después del límite del cliente).
+            if (srv.delayReply) { const d = srv.delayReply; srv.delayReply = 0; await new Promise(r => setTimeout(r, d)); }
             return out;
           }
           throw new Error('demasiados reintentos');
@@ -115,7 +117,7 @@ function device(srv, name, opts) {
     db: srv.db(), collection: 'clients', tabId: name,
     storage: opts.storage || null,
     now: () => clock.t,
-    timeoutMs: 2000,
+    timeoutMs: opts.timeoutMs || 2000,
     docLimit: opts.docLimit,
     diffOpts: opts.diffOpts,
     getLocal: id => (local[id] === undefined ? undefined : clone(local[id])),
@@ -1014,4 +1016,336 @@ test('index.html: sin set() directos sobre clients, sin persistencia y con el m�
   assert.ok(!/clientsCol\(\)\.doc\([^)]*\)\.set\(/.test(html), 'no debe quedar clientsCol().doc().set()');
   assert.ok(!/collection\('clients'\)\.doc\([^)]*\)\.set\(/.test(html), "no debe quedar collection('clients').doc().set()");
   assert.ok(!/function writeClientDoc/.test(html));
+});
+
+/* ======================================================================
+   Falso conflicto por respuesta perdida (un solo dispositivo).
+   Un guardado llega a la nube pero la confirmación no vuelve; al cambiar
+   otra vez el mismo dato, NO debe salir "cambiado en otro dispositivo".
+   Los conflictos reales entre dispositivos deben seguir bloqueando.
+   ====================================================================== */
+const RK = 'ex1|0';
+function clienteConRir() { const c = clienteFicticio(); blk(c).log[RK] = { kg: 60, reps: 8, rir: '2' }; return c; }
+const rirDe = d => blk(d).log[RK].rir;
+const conflictos = dev => dev.statuses.filter(x => x.s === 'conflict');
+const pendientes = st => Array.from(st._map.keys()).filter(k => k.startsWith('jcg_pending:'));
+
+test('FC1 guardado normal: firma su envío y no deja nada pendiente', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.equal(rirDe(srv.get('cli1')), '1');
+  assert.match(srv.get('cli1')._updatedBy, /^A~\d+$/);
+  assert.equal(a.sync.hasUnsaved(), false);
+  assert.deepEqual(pendientes(storage), []);
+});
+
+test('FC2 llega a la nube pero se pierde la confirmación; se vuelve a cambiar el mismo RIR: sin conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  assert.equal(rirDe(srv.get('cli1')), '1');            // sí llegó
+  assert.ok(pendientes(storage).length);                 // y el journal lo conserva
+  blk(a.local.cli1).log[RK].rir = '0';
+  const r = await a.sync.save('cli1');
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.equal(conflictos(a).length, 0);
+  assert.equal(a.sync.hasUnsaved(), false);
+  assert.deepEqual(pendientes(storage), []);
+});
+
+test('FC2b sin cambios nuevos tras la respuesta perdida: reconoce su envío y no vuelve a escribir', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  const w = srv.writes;
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.equal(srv.writes, w);
+  assert.equal(a.sync.hasUnsaved(), false);
+});
+
+test('FC3 confirmación tardía de la transacción (tras el límite): se toma como confirmada', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage, timeoutMs: 40 }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.delayReply = 150;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  await new Promise(r => setTimeout(r, 200));
+  await tick();
+  assert.equal(a.sync.hasUnsaved(), false);
+  assert.equal(a.last('cli1').s, 'saved');
+  blk(a.local.cli1).log[RK].rir = '0';
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.equal(conflictos(a).length, 0);
+  assert.deepEqual(pendientes(storage), []);
+});
+
+test('FC3b el aviso en tiempo real de su propio envío llega DESPUÉS de volver a editar: sin conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); a.load('cli1');
+  const cola = []; srv.onChange((id, d) => cola.push([id, d]));
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  blk(a.local.cli1).log[RK].rir = '0';
+  for (const [id, d] of cola.splice(0)) a.sync.remote(id, d, { fromCache: false, hasPendingWrites: false });
+  await tick();
+  assert.equal(conflictos(a).length, 0);
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.equal(rirDe(a.local.cli1), '0');
+  assert.equal(a.sync.hasUnsaved(), false);
+});
+
+test('FC4 el guardado nunca llega (sin conexión): se conserva y se envía al volver, sin conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.online = false;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  assert.equal(rirDe(srv.get('cli1')), '2');             // no llegó
+  assert.ok(pendientes(storage).length);
+  blk(a.local.cli1).log[RK].rir = '0';
+  srv.online = true;
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.equal(conflictos(a).length, 0);
+});
+
+test('FC5 varios intentos fallidos (uno llega sin respuesta, dos sin conexión) y vuelve la red', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  srv.online = false;
+  blk(a.local.cli1).log[RK].kg = 62.5;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  blk(a.local.cli1).log[RK].rir = '0';
+  blk(a.local.cli1).log['ex1|1'] = { kg: 60, reps: 7, rir: '1' };
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  srv.online = true;
+  assert.ok((await a.sync.save('cli1')).ok);
+  const nube = blk(srv.get('cli1')).log;
+  assert.deepEqual(nube[RK], { kg: 62.5, reps: 8, rir: '0' });
+  assert.deepEqual(nube['ex1|1'], { kg: 60, reps: 7, rir: '1' });
+  assert.deepEqual(Object.keys(nube).sort(), ['ex1|0', 'ex1|1']);
+  assert.equal(conflictos(a).length, 0);
+  assert.deepEqual(pendientes(storage), []);
+});
+
+test('FC6 dos dispositivos cambian el mismo RIR: sigue siendo conflicto y no se pisa nada', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  assert.ok((await a.sync.save('cli1')).ok);
+  blk(b.local.cli1).log[RK].rir = '3';
+  const r = await b.sync.save('cli1');
+  assert.equal(r.reason, 'conflict');
+  assert.equal(rirDe(srv.get('cli1')), '1');
+});
+
+test('FC6b respuesta perdida en A, luego B cambia ese RIR; A vuelve a cambiarlo sin enterarse: conflicto (no se adivina)', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1'); b.listen();
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  await tick();
+  blk(b.local.cli1).log[RK].rir = '4';               // B ve el 1 de A y lo cambia a 4
+  assert.ok((await b.sync.save('cli1')).ok);
+  blk(a.local.cli1).log[RK].rir = '0';
+  const r = await a.sync.save('cli1');
+  assert.equal(r.reason, 'conflict');
+  assert.equal(rirDe(srv.get('cli1')), '4');           // lo de B intacto
+});
+
+test('FC6c respuesta perdida en A y después B escribe otra cosa: A ya no puede demostrar que es suyo → conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1'); b.listen();
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  await tick();
+  blk(b.local.cli1).log[RK].kg = 61;                 // B toca otra cosa de la misma serie
+  assert.ok((await b.sync.save('cli1')).ok);
+  assert.match(srv.get('cli1')._updatedBy, /^B~/);
+  blk(a.local.cli1).log[RK].rir = '0';
+  const r = await a.sync.save('cli1');
+  assert.equal(r.reason, 'conflict');                // regla de siempre: sin aviso en tiempo real, A no sabe
+  assert.equal(blk(srv.get('cli1')).log[RK].kg, 61);
+  assert.equal(rirDe(srv.get('cli1')), '1');
+});
+
+test('FC7 dos dispositivos, campos distintos, con una respuesta perdida en medio: se guardan los dos', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1'); a.listen(); b.listen();
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  await tick();
+  blk(b.local.cli1).log['ex2|0'] = { kg: 40, reps: 10 };
+  assert.ok((await b.sync.save('cli1')).ok);
+  await tick();
+  blk(a.local.cli1).log[RK].rir = '0';
+  assert.ok((await a.sync.save('cli1')).ok);
+  await tick();
+  const nube = blk(srv.get('cli1')).log;
+  assert.equal(nube[RK].rir, '0');
+  assert.deepEqual(nube['ex2|0'], { kg: 40, reps: 10 });
+  assert.equal(conflictos(a).length + conflictos(b).length, 0);
+  assert.deepEqual(blk(b.local.cli1).log, nube);
+});
+
+test('FC8 muchos cambios seguidos (series, cargas, reps, notas de dolor) con respuestas perdidas intercaladas', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const a = device(srv, 'A', { storage }); a.load('cli1');
+  for (let i = 0; i < 24; i++) {
+    const L = blk(a.local.cli1).log;
+    const k = 'ex' + (1 + (i % 2)) + '|' + (i % 3);
+    L[k] = Object.assign({}, L[k], { kg: 50 + i, reps: 5 + (i % 4), rir: String(i % 4) });
+    blk(a.local.cli1).exNotes['ex' + (1 + (i % 2))] = { pain: i % 5, nota: 'molestia ' + i };
+    if (i % 3 === 0) srv.loseReply = true;
+    if (i % 7 === 6) srv.online = false;
+    await a.sync.save('cli1');
+    srv.online = true;
+  }
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.deepEqual(S.stripSync(srv.get('cli1')), S.stripSync(a.local.cli1));
+  assert.equal(Object.keys(blk(srv.get('cli1')).log).length, 6);
+  assert.equal(conflictos(a).length, 0);
+  assert.deepEqual(pendientes(storage), []);
+});
+
+test('FC9 cerrar y reabrir con cambios pendientes tras una respuesta perdida: se recuperan sin conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock }); a.load('cli1'); a.sync.heartbeat();
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.loseReply = true;
+  await a.sync.save('cli1');                          // llegó, sin respuesta
+  srv.online = false;
+  blk(a.local.cli1).log[RK].rir = '0';
+  blk(a.local.cli1).exNotes.ex1 = { pain: 3 };
+  await a.sync.save('cli1');                          // no llega; se cierra la app
+  srv.online = true;
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  assert.deepEqual(n.sync.recover().map(x => x.ok), [true]);
+  await tick();
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.deepEqual(blk(srv.get('cli1')).exNotes.ex1, { pain: 3 });
+  assert.equal(conflictos(n).length, 0);
+  assert.deepEqual(pendientes(storage).filter(k => !k.includes(':A:')), []);
+});
+
+test('FC9b reabrir cuando el envío NO llegó: se aplica lo pendiente de siempre', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock }); a.load('cli1'); a.sync.heartbeat();
+  srv.online = false;
+  blk(a.local.cli1).log[RK].rir = '1';
+  await a.sync.save('cli1');
+  srv.online = true;
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  assert.deepEqual(n.sync.recover().map(x => x.ok), [true]);
+  await tick();
+  assert.equal(rirDe(srv.get('cli1')), '1');
+});
+
+test('FC9c reabrir con pendientes cuando OTRO dispositivo cambió ese dato entretanto: conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock }); a.load('cli1'); a.sync.heartbeat();
+  srv.online = false;
+  blk(a.local.cli1).log[RK].rir = '1';
+  await a.sync.save('cli1');
+  srv.online = true;
+  const b = device(srv, 'B'); b.load('cli1');
+  blk(b.local.cli1).log[RK].rir = '5';
+  assert.ok((await b.sync.save('cli1')).ok);
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock });
+  n.load('cli1');
+  assert.deepEqual(n.sync.recover().map(x => x.ok), [false]);
+  assert.equal(rirDe(srv.get('cli1')), '5');
+});
+
+test('FC10 resolución manual de un conflicto real: la nube gana en lo que choca, el resto se guarda', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1');
+  blk(b.local.cli1).log[RK].rir = '4';
+  assert.ok((await b.sync.save('cli1')).ok);
+  blk(a.local.cli1).log[RK].rir = '1';
+  blk(a.local.cli1).exNotes.ex2 = { pain: 2 };
+  assert.equal((await a.sync.save('cli1')).reason, 'conflict');
+  const r = await a.sync.resolveWithCloud('cli1');
+  assert.ok(r.ok);
+  assert.equal(rirDe(srv.get('cli1')), '4');
+  assert.deepEqual(blk(srv.get('cli1')).exNotes.ex2, { pain: 2 });
+  assert.equal(a.sync.isBlocked('cli1'), false);
+  assert.equal(a.sync.hasUnsaved(), false);
+});
+
+test('FC11 programación: crear semana con respuesta perdida y luego editar un ejercicio: sin duplicar ni conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A'); a.load('cli1');
+  const prog = () => blk(a.local.cli1).program;
+  const semana2 = clone(prog().weeks[0]);
+  semana2.days[0].exs.forEach((e, i) => { e.uid = 'w2ex' + i; });
+  prog().weeks.push(semana2);
+  srv.loseReply = true;
+  await a.sync.save('cli1');
+  assert.equal(blk(srv.get('cli1')).program.weeks.length, 2);
+  prog().weeks[1].days[0].exs[0].sets = 4;
+  prog().weeks[1].days[0].exs.push({ uid: 'w2ex9', n: 'Remo', sets: 3 });
+  assert.ok((await a.sync.save('cli1')).ok);
+  const w = blk(srv.get('cli1')).program.weeks;
+  assert.equal(w.length, 2);
+  assert.equal(w[1].days[0].exs[0].sets, 4);
+  assert.deepEqual(w[1].days[0].exs.map(e => e.uid), ['w2ex0', 'w2ex1', 'w2ex9']);
+  assert.deepEqual(blk(srv.get('cli1')).log[RK], { kg: 60, reps: 8, rir: '2' }); // registro intacto
+  assert.equal(conflictos(a).length, 0);
+});
+
+test('FC3c dos envíos seguidos con confirmación tardía: llegan en orden y no se olvida el segundo', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteConRir());
+  const a = device(srv, 'A', { timeoutMs: 40 }); a.load('cli1');
+  blk(a.local.cli1).log[RK].rir = '1';
+  srv.delayReply = 150;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  blk(a.local.cli1).log[RK].rir = '3';
+  srv.delayReply = 150;
+  assert.equal((await a.sync.save('cli1')).reason, 'error');
+  assert.equal(rirDe(srv.get('cli1')), '3');
+  await new Promise(r => setTimeout(r, 400));
+  await tick();
+  blk(a.local.cli1).log[RK].rir = '0';
+  const r = await a.sync.save('cli1');
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal(rirDe(srv.get('cli1')), '0');
+  assert.equal(conflictos(a).length, 0);
 });

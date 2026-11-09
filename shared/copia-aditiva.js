@@ -150,15 +150,35 @@
      de la colección que existen ahora, para no repetir un código o una cuenta que ya es de otra. */
   // Devuelve { valor, lista }: el documento sin las credenciales que no se reponen (a cualquier
   // profundidad, p. ej. negocio.coachPush) y la lista de las que llevaba, con lo decidido.
+  // A qué ficha da acceso cada valor ahora. En una ficha, sus code/codes/authUid/authUids son suyos; en
+  // la lista de códigos del entrenador (mapa código → {client}) cada código es de la ficha a la que apunta.
+  function duenoDeEntrada(v, x, propio) { return isObj(v) && isObj(v[x]) && v[x].client ? String(v[x].client) : propio; }
+  function duenosCred(todos, excepto) {
+    const m = {};
+    Object.keys(todos || {}).forEach(function (otro) {
+      const d = todos[otro];
+      if (otro === excepto || !isObj(d)) return;
+      UNICAS.forEach(function (k) {
+        valoresCred(d[k]).forEach(function (x) { const o = duenoDeEntrada(d[k], x, otro); (m[x] = m[x] || {})[o] = true; });
+      });
+    });
+    return m;
+  }
   function credencialesAlRecrear(id, doc, opciones) {
     const lista = [];
-    const usadas = new Set();
-    const todos = (opciones && opciones.todos) || {};
-    Object.keys(todos).forEach(function (otro) {
-      const d = todos[otro];
-      if (otro === id || !isObj(d)) return;
-      UNICAS.forEach(function (k) { valoresCred(d[k]).forEach(function (x) { usadas.add(x); }); });
-    });
+    const duenos = duenosCred((opciones && opciones.todos) || {}, id);
+    const deOtro = function (x, propio) { const d = duenos[String(x)]; return !!d && Object.keys(d).some(function (o) { return o !== propio; }); };
+    // Una credencial (código suelto, lista o mapa del entrenador) sin los valores que ya dan acceso a OTRA
+    // ficha. Valor por valor: en la lista del entrenador solo sale la entrada afectada, no todas.
+    function sinLosDeOtro(v) {
+      if (Array.isArray(v)) { const q = v.filter(function (x) { return !deOtro(x, id); }); return { v: q, quitados: v.length - q.length, queda: q.length > 0 }; }
+      if (isObj(v)) {
+        const q = {}; let n = 0;
+        Object.keys(v).forEach(function (x) { if (deOtro(x, duenoDeEntrada(v, x, id))) n++; else q[x] = v[x]; });
+        return { v: q, quitados: n, queda: Object.keys(q).length > 0 };
+      }
+      return deOtro(v, id) ? { v: undefined, quitados: 1, queda: false } : { v: v, quitados: 0, queda: true };
+    }
     function limpiar(v, ruta) {
       if (Array.isArray(v)) return v.map(function (x, i) { return limpiar(x, ruta + '[' + (keyOf(x) || i) + ']'); });
       if (!isObj(v)) return v;
@@ -166,11 +186,12 @@
       Object.keys(v).forEach(function (k) {
         const r = ruta ? ruta + '.' + k : k;
         if (NO_REPONER.indexOf(k) < 0) { out[k] = limpiar(v[k], r); return; }
-        let motivo = null;
-        if (!(opciones && opciones.credenciales)) motivo = 'no-pedido';
-        else if (!ruta && UNICAS.indexOf(k) >= 0 && valoresCred(v[k]).some(function (x) { return usadas.has(x); })) motivo = 'en-uso';
-        lista.push({ campo: r, repuesta: !motivo, motivo: motivo });
-        if (!motivo) out[k] = v[k];
+        if (!(opciones && opciones.credenciales)) { lista.push({ campo: r, repuesta: false, motivo: 'no-pedido' }); return; }
+        if (ruta || UNICAS.indexOf(k) < 0) { lista.push({ campo: r, repuesta: true, motivo: null }); out[k] = v[k]; return; }
+        const s = sinLosDeOtro(v[k]);
+        const motivo = !s.quitados ? null : (s.queda ? 'en-uso-parcial' : 'en-uso');
+        lista.push({ campo: r, repuesta: s.queda, motivo: motivo, quitados: s.quitados });
+        if (s.queda) out[k] = s.v;
       });
       return out;
     }

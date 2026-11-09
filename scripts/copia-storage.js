@@ -136,13 +136,25 @@ async function restaurar(bucket, dir, opciones) {
   const v = verificar(dir);
   if (!v.ok) throw new Error('La copia de Storage no es válida: ' + v.problemas.join('; '));
   const man = JSON.parse(fs.readFileSync(path.join(dir, MANIFIESTO), 'utf8'));
-  const informe = { repuestos: [], yaExistian: 0 };
+  const excluir = opciones.excluir || [];
+  const informe = { repuestos: [], yaExistian: 0, excluidos: 0, huella: null };
+  const faltan = [];
   for (const a of man.archivos) {
-    const file = bucket.file(a.ruta);
-    const [existe] = await file.exists();
+    const [existe] = await bucket.file(a.ruta).exists();
     if (existe) { informe.yaExistian++; continue; }
-    informe.repuestos.push(a.ruta);
-    if (!opciones.apply) continue;
+    // Un archivo borrado A PROPÓSITO (p. ej. una foto que el cliente pidió quitar) se excluye por ruta o carpeta.
+    if (excluir.some(function (e) { return a.ruta === e || a.ruta.indexOf(e.endsWith('/') ? e : e + '/') === 0; })) { informe.excluidos++; continue; }
+    faltan.push(a);
+  }
+  informe.repuestos = faltan.map(function (a) { return a.ruta; });
+  informe.huella = require('../shared/copia-aditiva').huellaPlan(informe.repuestos.map(function (r) { return 'storage|' + r; }));
+  if (!opciones.apply) return informe;
+  if (opciones.plan !== undefined && opciones.plan !== informe.huella) {
+    const e = new Error('El plan ya no es el revisado (huella ' + informe.huella + '). No se ha escrito nada: repite el simulacro.');
+    e.code = 'PLAN_DISTINTO'; throw e;
+  }
+  for (const a of faltan) {
+    const file = bucket.file(a.ruta);
     const metadata = { contentType: a.tipo || undefined, metadata: a.token ? { firebaseStorageDownloadTokens: a.token } : {} };
     // ifGenerationMatch: 0 → solo si sigue sin existir; si alguien lo subió mientras tanto, no se pisa.
     await file.save(fs.readFileSync(rutaLocal(dir, a.ruta)), { resumable: false, metadata, preconditionOpts: { ifGenerationMatch: 0 } });
@@ -184,9 +196,13 @@ async function main() {
   if (apply && modo === 'real' && process.env.ALLOW_RESTORE_APPLY !== 'yes') {
     console.error('No se ha escrito nada. Escribir en el proyecto real exige ALLOW_RESTORE_APPLY=yes.'); process.exit(2);
   }
-  const inf = await restaurar(bucket, dir, { apply });
-  console.log((apply ? 'APLICADO' : 'SIMULACRO (no se ha escrito nada)') + ' en ' + modo + '. Repuestos: ' + inf.repuestos.length + '. Ya existían (sin tocar): ' + inf.yaExistian + '.');
-  inf.repuestos.slice(0, 200).forEach(function (r) { console.log('  + ' + r); });
+  if (apply && !arg('--plan')) { console.error('Para aplicar hace falta --plan HUELLA (la del simulacro revisado). No se ha escrito nada.'); process.exit(2); }
+  const excluir = [];
+  process.argv.forEach(function (a, i) { if (a === '--excluir' && process.argv[i + 1]) excluir.push(process.argv[i + 1]); });
+  const inf = await restaurar(bucket, dir, { apply, excluir, plan: arg('--plan') || undefined });
+  console.log((apply ? 'APLICADO' : 'SIMULACRO (no se ha escrito nada)') + ' en ' + modo + '. Se repondrían: ' + inf.repuestos.length + '. Excluidos: ' + inf.excluidos + '. Ya existían (sin tocar): ' + inf.yaExistian + '.');
+  inf.repuestos.forEach(function (r) { console.log('  + ' + r); });
+  console.log('HUELLA DEL PLAN: ' + inf.huella + (apply ? '' : '   → para aplicar: --apply --plan ' + inf.huella + ' (con las mismas --excluir)'));
 }
 
 module.exports = { copiar, verificar, restaurar, enlacesEnCopia, iniciarStorage, MANIFIESTO };

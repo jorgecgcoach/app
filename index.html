@@ -3513,51 +3513,114 @@ function exportBackup(){
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   toast('Copia descargada');
 }
-// Restaurar desde un archivo es ADITIVO (shared/copia-aditiva.js, igual que scripts/restaurar-copia.js):
-// solo añade lo que falta. Nunca borra ni cambia lo que ya existe, así que no se pierde nada registrado
-// después de la copia, y nunca revive códigos, PIN ni cuentas retirados. Antes enviaba la copia entera
-// como cambios: borraba las series registradas después de hacerla y volvía a poner códigos antiguos.
+// Restaurar desde un archivo (shared/copia-aditiva.js, la misma lógica que scripts/restaurar-copia.js).
+// 1) Antes de nada: nada pendiente de guardar, y se lee la nube AHORA. Si la nube tiene algo que esta
+//    pantalla no ha visto (otro dispositivo), se para y se pide recargar: el plan nunca se calcula con
+//    datos viejos.
+// 2) SIMULACRO: se enseña cada cosa que se añadiría y se puede desmarcar (lo borrado a propósito
+//    después de la copia). Solo añade: nunca borra ni cambia nada, ni revive códigos, PIN o cuentas.
+// 3) Al aplicar, va por el guardado seguro: si alguien cambia lo mismo a la vez, ese cliente queda en
+//    conflicto y no se toca. Al final, un informe por cliente: restaurado, no restaurado o pendiente.
+let _restorePlan=null;
 async function importBackupFile(file){
   if(!file)return;
-  let text;try{text=await file.text();}catch(e){toast('No se pudo leer el archivo');return;}
-  let dump;try{dump=JSON.parse(text);}catch(e){toast('Ese archivo no es una copia válida');return;}
-  if(!dump||!dump.clients||typeof dump.clients!=='object'){toast('Ese archivo no es una copia válida');return;}
-  const CA=window.CopiaAditiva;
-  const sync=getSync();
-  if(!CA||!sync){toast('Sin conexión con la nube: no se ha restaurado nada');return;}
-  // Simulacro: qué se añadiría, sin tocar nada todavía.
-  const plan=[];let nCambios=0;
-  for(const cid of Object.keys(dump.clients)){
-    if(cid===COACH_DOC||!dump.clients[cid]||typeof dump.clients[cid]!=='object')continue;
-    const cur=DATA.clients[cid];
-    const f=CA.fusionAditiva(cur===undefined?undefined:cur,CA.sinSync(dump.clients[cid]));
-    if(f.cambios.length){plan.push({cid,valor:f.valor,nuevo:cur===undefined});nCambios+=f.cambios.length;}
+  let text;try{text=await file.text();}catch(e){alert('No se pudo leer el archivo');return;}
+  let dump;try{dump=JSON.parse(text);}catch(e){alert('Ese archivo no es una copia válida');return;}
+  if(!dump||!dump.clients||typeof dump.clients!=='object'){alert('Ese archivo no es una copia válida');return;}
+  const CA=window.CopiaAditiva, sync=getSync();
+  if(!CA||!sync||!window.db){alert('Sin conexión con la nube: no se ha restaurado nada');return;}
+  if((typeof hasUnsavedWork==='function'&&hasUnsavedWork())||(sync.hasUnsaved&&sync.hasUnsaved())){
+    alert('Antes de restaurar, espera a que se guarde todo (y resuelve cualquier aviso rojo). No se ha restaurado nada.');return;
   }
-  const m=dump.meta||{};
-  const metaActual={exLibrary:DATA.exLibrary||[],templates:DATA.templates||{workouts:[],diets:[]},negocio:DATA.negocio||{}};
-  const metaCopia={};['exLibrary','templates','negocio'].forEach(k=>{if(m[k]!==undefined)metaCopia[k]=m[k];});
-  const fm=CA.fusionAditiva(metaActual,metaCopia);
-  nCambios+=fm.cambios.length;
-  if(!nCambios){toast('Todo lo de la copia ya está en la nube: no hay nada que añadir');return;}
-  const nuevos=plan.filter(p=>p.nuevo).length;
-  const NL='\n';
-  if(!confirm('RESTAURAR desde la copia (solo añade lo que falta):'+NL+NL
-    +'• '+plan.length+' cliente(s) con datos que faltan'+(nuevos?(' ('+nuevos+' que ya no existían)'):'')+NL
-    +'• '+fm.cambios.length+' elemento(s) de biblioteca, plantillas o negocio'+NL+NL
-    +'No se borra ni se cambia nada de lo actual: lo registrado después de la copia se queda como está. Los códigos y el PIN no se tocan.'+NL+NL
-    +'¿Seguir?'))return;
-  for(const p of plan)DATA.clients[p.cid]=p.valor;
-  if(fm.cambios.length){DATA.exLibrary=fm.valor.exLibrary;DATA.templates=fm.valor.templates;DATA.negocio=normNegocio(fm.valor.negocio);}
+  const copiaClientes={};
+  Object.keys(dump.clients).forEach(id=>{if(id!==COACH_DOC&&dump.clients[id]&&typeof dump.clients[id]==='object')copiaClientes[id]=dump.clients[id];});
+  const m=dump.meta||{};const copiaMeta={};['exLibrary','templates','negocio'].forEach(k=>{if(m[k]!==undefined)copiaMeta[k]=m[k];});
+  toast('Comprobando la nube…');
+  // Lectura de la nube, directa del servidor.
+  const nube={},base={};
+  try{
+    for(const id of Object.keys(copiaClientes).concat(COACH_DOC)){
+      const s=await window.db.collection('clients').doc(id).get({source:'server'});
+      nube[id]=s.exists?s.data():null;
+      base[id]=sync.baseOf(id);
+    }
+  }catch(e){console.warn('restaurar: leer nube',e);alert('No se ha podido leer la nube (¿sin conexión?). No se ha restaurado nada.');return;}
+  const pc=CA.prepararRestauracion({col:'clients',nube,base,locales:DATA.clients,copia:copiaClientes});
+  const metaLocal={exLibrary:DATA.exLibrary||[],templates:DATA.templates||{workouts:[],diets:[]},negocio:DATA.negocio||{}};
+  const pickMeta=d=>d?{exLibrary:d.exLibrary,templates:d.templates,negocio:d.negocio}:null;
+  const pm=CA.prepararRestauracion({col:'clients',nube:{[COACH_DOC]:pickMeta(nube[COACH_DOC])},base:{[COACH_DOC]:pickMeta(base[COACH_DOC])},locales:{[COACH_DOC]:metaLocal},copia:Object.keys(copiaMeta).length?{[COACH_DOC]:copiaMeta}:{}});
+  if(!pc.ok||!pm.ok){
+    const n=(pc.obsoletos||[]).length+(pm.obsoletos||[]).length;
+    alert('Hay cambios en la nube que esta pantalla todavía no tiene ('+n+' ficha(s)). Para no calcular la restauración con datos viejos, recarga la app y vuelve a restaurar. No se ha restaurado nada.');
+    return;
+  }
+  const docs=pc.plan.docs.concat(pm.plan.docs);
+  if(!docs.length){toast('Todo lo de la copia ya está en la nube: no hay nada que añadir');return;}
+  _restorePlan={dump,copiaClientes,copiaMeta,nube};
+  openRestorePlan(docs);
+}
+function restoreDocName(id){
+  if(id===COACH_DOC)return 'Datos del entrenador (biblioteca, plantillas, negocio)';
+  const c=(DATA.clients&&DATA.clients[id])||(_restorePlan&&_restorePlan.copiaClientes[id])||{};
+  return c.name||id;
+}
+function openRestorePlan(docs){
+  closeRestorePlan();
+  const d=document.createElement('div');d.id='restorePlanScrim';d.className='scrim open';
+  const total=docs.reduce((n,x)=>n+x.cambios.length,0);
+  const lista=docs.map((doc,i)=>'<details style="margin:0 0 8px;border:1px solid #eee;border-radius:10px;padding:6px 8px">'
+    +'<summary style="cursor:pointer;font-weight:700"><label onclick="event.stopPropagation()"><input type="checkbox" checked data-doc="'+i+'" onchange="restorePlanDoc(this)"> '
+    +escapeHtml(restoreDocName(doc.id))+'</label> <span style="opacity:.7;font-weight:400">· '+(doc.nuevo?'ya no existe: se recrearía entera':(doc.cambios.length+' cosa(s) que faltan'))+'</span></summary>'
+    +doc.cambios.map(c=>'<label style="display:block;font-size:.78rem;margin:3px 0 3px 18px;word-break:break-all"><input type="checkbox" checked data-cid="'+escapeHtml(c.id)+'" data-of="'+i+'"> '
+      +escapeHtml(c.ruta)+' <span style="opacity:.6">('+(c.tipo==='documento-nuevo'?'ficha entera':c.tipo==='elemento'?'elemento de una lista':'dato')+')</span></label>').join('')
+    +'</details>').join('');
+  d.innerHTML='<div class="modal" style="max-width:560px;max-height:86vh;overflow:auto"><h3 style="margin:0 0 6px">🛟 Simulacro de restauración</h3>'
+    +'<p style="font-size:.85rem;margin:0 0 10px">Esto es lo que <b>falta</b> en la nube y está en la copia ('+total+'). Solo se añade: no se borra ni se cambia nada de lo actual, y los códigos y el PIN no se tocan.</p>'
+    +'<p style="font-size:.85rem;margin:0 0 12px;color:#b3261e"><b>Desmarca</b> lo que se borró a propósito después de la copia (un cliente dado de baja, un bloque o una serie eliminada…): si no, volvería.</p>'
+    +lista
+    +'<button class="primary" style="width:100%;margin:10px 0 8px" onclick="applyRestorePlan()">Restaurar lo marcado</button>'
+    +'<button style="width:100%;background:#eee;border:none;padding:10px;border-radius:10px;cursor:pointer" onclick="closeRestorePlan()">Cancelar (no se restaura nada)</button></div>';
+  document.body.appendChild(d);
+}
+function restorePlanDoc(cb){document.querySelectorAll('#restorePlanScrim input[data-of="'+cb.dataset.doc+'"]').forEach(x=>{x.checked=cb.checked;});}
+function closeRestorePlan(){const m=document.getElementById('restorePlanScrim');if(m)m.remove();}
+async function applyRestorePlan(){
+  const P=_restorePlan;if(!P)return;
+  const CA=window.CopiaAditiva,sync=getSync();
+  const marcados=[],excluir=[];
+  document.querySelectorAll('#restorePlanScrim input[data-cid]').forEach(x=>{(x.checked?marcados:excluir).push(x.dataset.cid);});
+  closeRestorePlan();_restorePlan=null;
+  if(!marcados.length){toast('No se ha marcado nada: no se ha restaurado nada');return;}
+  // Se recalcula con lo que hay AHORA y solo se sigue si sale exactamente lo marcado.
+  const pc=CA.planificar('clients',DATA.clients,P.copiaClientes,excluir);
+  const metaLocal={exLibrary:DATA.exLibrary||[],templates:DATA.templates||{workouts:[],diets:[]},negocio:DATA.negocio||{}};
+  const pm=CA.planificar('clients',{[COACH_DOC]:metaLocal},Object.keys(P.copiaMeta).length?{[COACH_DOC]:P.copiaMeta}:{},excluir);
+  if(CA.huellaPlan(pc.ids.concat(pm.ids))!==CA.huellaPlan(marcados)){
+    alert('Algo ha cambiado mientras revisabas la lista. No se ha restaurado nada: vuelve a empezar.');return;
+  }
+  for(const doc of pc.docs)DATA.clients[doc.id]=doc.valor;
+  if(pm.docs.length){const v=pm.docs[0].valor;DATA.exLibrary=v.exLibrary;DATA.templates=v.templates;DATA.negocio=normNegocio(v.negocio);}
   try{ensureData();}catch(e){console.warn('ensureData import',e);}
-  // Va por el guardado seguro: si alguien cambia lo mismo a la vez, queda en conflicto (aviso rojo) en vez de pisarlo.
-  let ok=0,fail=0;
-  for(const p of plan){
-    const r=await sync.save(p.cid);
-    if(r&&r.ok)ok++;else{fail++;console.warn('import cliente',p.cid,r&&r.reason);}
+  const informe=[];
+  for(const doc of pc.docs.concat(pm.docs)){
+    let r;try{r=await sync.save(doc.id);}catch(e){r={ok:false,reason:'error'};}
+    informe.push({id:doc.id,n:doc.cambios.length,ok:!!(r&&r.ok),reason:r&&r.reason});
   }
-  if(fm.cambios.length){const r=await sync.save(COACH_DOC);if(!(r&&r.ok)){fail++;console.warn('import meta',r&&r.reason);}}
   if(typeof renderAll==='function')renderAll();
-  toast('Restaurado (solo lo que faltaba): '+ok+' cliente(s)'+(fm.cambios.length?' y datos del entrenador':'')+(fail?(' · ⚠ '+fail+' con error'):''));
+  showRestoreReport(informe,excluir.length);
+}
+function showRestoreReport(informe,excluidos){
+  const ok=informe.filter(x=>x.ok),mal=informe.filter(x=>!x.ok);
+  const linea=x=>'<li style="margin:4px 0">'+(x.ok?'✔ ':(x.reason==='conflict'?'⚠ ':'⏳ '))+escapeHtml(restoreDocName(x.id))+' — '
+    +(x.ok?('restaurado ('+x.n+')'):x.reason==='conflict'?'<b>NO restaurado</b>: alguien cambió esa ficha a la vez. No se ha tocado nada de la nube; revisa el aviso rojo.'
+      :'<b>sin confirmar</b>: queda guardado en este dispositivo y se enviará al volver la conexión. No cierres la app hasta que desaparezca el aviso.')+'</li>';
+  const d=document.createElement('div');d.id='restoreReportScrim';d.className='scrim open';
+  d.innerHTML='<div class="modal" style="max-width:520px;max-height:86vh;overflow:auto"><h3 style="margin:0 0 6px">'+(mal.length?'⚠ Restauración PARCIAL':'✔ Restauración completa')+'</h3>'
+    +'<p style="font-size:.85rem;margin:0 0 8px">'+ok.length+' de '+informe.length+' ficha(s) restauradas'+(excluidos?(' · '+excluidos+' cosa(s) excluidas por ti'):'')+'.</p>'
+    +'<ul style="padding-left:18px;font-size:.85rem;margin:0 0 12px">'+informe.map(linea).join('')+'</ul>'
+    +(mal.length?'<p style="font-size:.8rem;margin:0 0 12px">Puedes volver a restaurar la misma copia más tarde: solo añadirá lo que siga faltando.</p>':'')
+    +'<button class="primary" style="width:100%" onclick="document.getElementById(\'restoreReportScrim\').remove()">Entendido</button></div>';
+  document.body.appendChild(d);
 }
 function openBackup(){
   const m=$("#backupScrim");if(m){m.classList.add('open');return}

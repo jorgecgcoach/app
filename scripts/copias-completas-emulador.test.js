@@ -223,3 +223,52 @@ test('8. la «Descargar copia» de la app también se puede verificar y restaura
   const meta = (await db.doc('clients/coach_data').get()).data();
   for (const k of ['coachCode', 'codes', 'exLibrary', 'templates', 'negocio']) assert.deepEqual(meta[k], m[k], 'meta ' + k);
 });
+
+test('9. simulacro detallado: cada cosa que se repondría con su identificador, y exclusiones (documento, bloque, serie, archivo)', async () => {
+  await vaciarTodo();
+  await restaurar(db, copia, { apply: true });
+  await st.restaurar(bucket, dirStorage, { apply: true });
+  // Después de la copia, a propósito: se da de baja a cliB, se borra el bloque b2 y la dieta de cliA y su foto.
+  await db.doc('clients/cliB').delete();
+  const d = (await db.doc('clients/cliA').get()).data();
+  d.blocks = d.blocks.filter(b => b.id !== 'b2'); delete d.menus; delete d.blocks[0].data.log['e1|1']; d._rev++;
+  await db.doc('clients/cliA').set(d);
+  await bucket.file(FOTO).delete();
+  const sim = await restaurar(db, copia, { apply: false });
+  const ids = sim.cambios.map(c => c.split('  (')[0]);
+  for (const x of ['clients/cliB|(documento)', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus', 'clients/cliA|blocks[id:b1].data.log.e1|1']) assert.ok(ids.includes(x), x);
+  const excluir = ['clients/cliB', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus'];
+  const sim2 = await restaurar(db, copia, { apply: false, excluir });
+  assert.deepEqual(sim2.cambios.map(c => c.split('  (')[0]), ['clients/cliA|blocks[id:b1].data.log.e1|1']);
+  await restaurar(db, copia, { apply: true, excluir, plan: sim2.huella });
+  const a = (await db.doc('clients/cliA').get()).data();
+  assert.deepEqual(a.blocks.map(b => b.id), ['b1']);
+  assert.equal(a.menus, undefined);
+  assert.ok(a.blocks[0].data.log['e1|1']);
+  assert.equal((await db.doc('clients/cliB').get()).exists, false);
+  const simSt = await st.restaurar(bucket, dirStorage, { apply: false, excluir: ['clients/cliA/photos/'] });
+  assert.deepEqual(simSt.repuestos, []);
+  assert.equal(simSt.excluidos, 1);
+  await st.restaurar(bucket, dirStorage, { apply: true, excluir: ['clients/cliA/photos/'], plan: simSt.huella });
+  assert.equal((await bucket.file(FOTO).exists())[0], false);
+});
+
+test('10. aplicar con un plan distinto del revisado no escribe nada', async () => {
+  const antes = (await db.doc('clients/cliA').get()).data();
+  const sim = await restaurar(db, copia, { apply: false });
+  await assert.rejects(() => restaurar(db, copia, { apply: true, plan: 'ffffffffffffffff' }), e => e.code === 'PLAN_DISTINTO');
+  await assert.rejects(() => restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ['clients/cliB'] }), e => e.code === 'PLAN_DISTINTO');
+  assert.deepEqual((await db.doc('clients/cliA').get()).data(), antes);
+  await assert.rejects(() => st.restaurar(bucket, dirStorage, { apply: true, plan: 'ffffffffffffffff' }), e => e.code === 'PLAN_DISTINTO');
+});
+
+test('11. si la nube cambia durante la restauración, ese documento no se toca y se informa', async () => {
+  const ref = db.doc('clients/cliA');
+  const d = (await ref.get()).data(); delete d.blocks[0].data.log['e1|0']; d._rev++; await ref.set(d);
+  const sim = await restaurar(db, copia, { apply: false, excluir: ['clients/cliB', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus'] });
+  assert.deepEqual(sim.cambios.map(c => c.split('  (')[0]), ['clients/cliA|blocks[id:b1].data.log.e1|0']);
+  // Justo antes de aplicar, el cliente vuelve a registrar esa serie con otros valores.
+  const d2 = (await ref.get()).data(); d2.blocks[0].data.log['e1|0'] = { kg: '110', reps: '5', rir: '1' }; d2._rev++; await ref.set(d2);
+  await assert.rejects(() => restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ['clients/cliB', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus'] }), e => e.code === 'PLAN_DISTINTO');
+  assert.deepEqual((await ref.get()).data().blocks[0].data.log['e1|0'], { kg: '110', reps: '5', rir: '1' });
+});

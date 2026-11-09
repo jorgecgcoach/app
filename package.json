@@ -9,7 +9,9 @@
     "e2e:emulador": "cd e2e && firebase emulators:start --only firestore --project demo-jcg-e2e --config firebase.e2e.json",
     "e2e:sembrar": "node e2e/emu.js seed",
     "e2e:servir": "node e2e/serve.js",
-    "migrate:dry-run": "node scripts/migrate-client-auth.js --backup scripts/fixtures/backup.sample.json"
+    "migrate:dry-run": "node scripts/migrate-client-auth.js --backup scripts/fixtures/backup.sample.json",
+    "test:copias": "firebase emulators:exec --only firestore,storage --project demo-jcg-copias --config firebase.copias.json \"node --test --test-concurrency=1 scripts/copia-emulador.test.js scripts/copias-completas-emulador.test.js\"",
+    "test:copias-unidad": "node --test scripts/copia.test.js shared/copia-aditiva.test.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "3.0.4",

@@ -360,3 +360,138 @@ test('15. el documento del entrenador recreado no revive su PIN ni la lista de c
   assert.equal(m.negocio.coachPush, undefined, 'tampoco el push del entrenador');
   assert.equal(m.exLibrary.length, 1, 'biblioteca, plantillas y negocio sí');
 });
+
+/* ---- Tercera revisión antes de fusionar el PR #10: cambios CONCURRENTES mientras el script aplica ---- */
+const { textoInforme } = require('./restaurar-copia');
+const FUERA = ['contacts', 'catalog', 'otra_coleccion'];
+// Cada código o cuenta, con las fichas a las que da acceso ahora (en sus campos o en la lista del entrenador).
+async function duenosDeCredenciales() {
+  const m = {};
+  const add = (x, o) => { (m[x] = m[x] || new Set()).add(o); };
+  (await db.collection('clients').get()).forEach(s => {
+    const v = s.data();
+    if (v.code) add('code:' + v.code, s.id);
+    if (Array.isArray(v.codes)) v.codes.forEach(c => add('code:' + c, s.id));
+    else if (v.codes) Object.keys(v.codes).forEach(c => add('code:' + c, (v.codes[c] && v.codes[c].client) || s.id));
+    if (v.authUid) add('uid:' + v.authUid, s.id);
+    (v.authUids || []).forEach(u => add('uid:' + u, s.id));
+  });
+  return m;
+}
+async function sinDuplicados() {
+  const m = await duenosDeCredenciales();
+  const dup = Object.keys(m).filter(k => m[k].size > 1).map(k => k + ' → ' + [...m[k]].join(','));
+  assert.deepEqual(dup, [], 'ningún código ni cuenta da acceso a dos fichas');
+}
+
+test('16. una ficha cambia en Firestore MIENTRAS el script aplica: no se pisa, el informe lo dice y el resto queda coherente', async () => {
+  const sinSerie = () => { const a = fichaCompleta(); delete a.blocks[0].data.log['e1|1']; a._rev = 60; return a; };
+  const meta = metaCompleta(); meta.templates.workouts = []; meta._rev = 61;
+  for (const variante of ['cambia lo mismo', 'la borran']) {
+    await db.doc('clients/cliA').set(sinSerie());
+    await db.doc('clients/cliB').set({ name: 'Cliente Ficticio B', blocks: [], _rev: 62 });
+    await db.doc('clients/coach_data').set(meta);
+    const sim = await restaurar(db, copia, { apply: false, excluir: FUERA });
+    const ids = sim.cambios.map(c => c.split('  (')[0]);
+    for (const x of ['clients/cliA|blocks[id:b1].data.log.e1|1', 'clients/cliB|blocks[id:bb]', 'clients/coach_data|templates.workouts[id:t1]']) assert.ok(ids.includes(x), x);
+    let deB;
+    const inf = await restaurar(db, copia, { apply: true, plan: sim.huella, excluir: FUERA, antesDeDocumento: async (col, id) => {
+      const ref = db.doc(col + '/' + id);
+      if (id === 'cliA') {   // otro cambio que NO toca lo que se repone: se conserva y cliA sí se restaura
+        const d = (await ref.get()).data(); d.blocks[1].data.log['e2|1'] = { kg: '42', reps: '9' }; d._rev++; await ref.set(d);
+      }
+      if (id === 'cliB') {   // a la vez, en cliB pasa justo lo que se iba a reponer
+        if (variante === 'la borran') await ref.delete();
+        else { deB = { name: 'Cliente Ficticio B', blocks: [{ id: 'bb', label: 'hecho de nuevo en el móvil', data: { _logv: 2, log: { 'x|0': { kg: '1' } } } }], _rev: 63 }; await ref.set(deB); }
+      }
+    } });
+    // cliB: no se toca, y el informe lo dice con su motivo.
+    assert.deepEqual(inf.noAplicados, ['clients/cliB'], variante);
+    assert.equal(inf.motivos['clients/cliB'], 'cambio-nube');
+    assert.equal(inf.parcial, true);
+    const b = await db.doc('clients/cliB').get();
+    if (variante === 'la borran') assert.equal(b.exists, false, 'lo borrado durante la restauración sigue borrado');
+    else assert.deepEqual(b.data(), deB, 'lo escrito durante la restauración queda tal cual');
+    // El resto: restaurado, sin perder lo posterior y con el sello del guardado seguro.
+    assert.deepEqual(inf.aplicados, ['clients/cliA', 'clients/coach_data']);
+    const a = (await db.doc('clients/cliA').get()).data();
+    assert.deepEqual(a.blocks[0].data.log['e1|1'], copia.colecciones.clients.cliA.blocks[0].data.log['e1|1']);
+    assert.deepEqual(a.blocks[1].data.log['e2|1'], { kg: '42', reps: '9' }, 'lo escrito durante la restauración en cliA se conserva');
+    assert.equal(a._rev, 62, 'cliA: _rev siguiente al que había justo antes');
+    assert.equal(a._updatedBy, lib.selloRestauracion(undefined)._updatedBy);
+    const m = (await db.doc('clients/coach_data').get()).data();
+    assert.deepEqual(m.templates.workouts, [{ id: 't1', name: 'Plantilla fuerza' }]);
+    assert.deepEqual(m.codes, meta.codes, 'la lista de códigos no se toca');
+    assert.equal(m._rev, 62);
+    // El informe impreso lo deja claro.
+    const txt = textoInforme(inf, { apply: true, modo: 'emulador', excluir: FUERA });
+    assert.match(txt, /RESTAURACIÓN PARCIAL/);
+    assert.match(txt, /clients\/cliB.*NO restaurado.*cambió en la nube/);
+    assert.match(txt, /✔ clients\/cliA/);
+    // Repetirlo (simulacro nuevo) termina el trabajo sin pisar nada.
+    const sim2 = await restaurar(db, copia, { apply: false, excluir: FUERA });
+    const fin = await restaurar(db, copia, { apply: true, plan: sim2.huella, excluir: FUERA });
+    assert.equal(fin.parcial, false);
+    assert.deepEqual((await db.doc('clients/cliA').get()).data().blocks[1].data.log['e2|1'], { kg: '42', reps: '9' });
+  }
+});
+
+test('17. --con-credenciales: si un código o una cuenta pasa a otra ficha después del simulacro (o durante la aplicación), nunca se duplica ni se reasigna', async () => {
+  const ex = ['clients/cliB', 'clients/coach_data', ...FUERA];
+  const preparar = async () => {
+    await db.doc('clients/cliA').delete();
+    await db.doc('clients/cliB').set({ name: 'Cliente Ficticio B', blocks: [], _rev: 70 });
+    await db.doc('clients/cliC').delete();
+    await db.doc('clients/coach_data').set(metaCompleta());   // FICT-A y FICT-A2 → cliA (su dueño), FICT-B → cliB
+  };
+  const darleACliB = async () => {
+    await db.doc('clients/cliB').set({ name: 'Cliente Ficticio B', code: 'FICT-A', authUids: ['uid-a2'], blocks: [], _rev: 71 });
+    const m = (await db.doc('clients/coach_data').get()).data(); m.codes['FICT-A'] = { client: 'cliB' }; m._rev++; await db.doc('clients/coach_data').set(m);
+  };
+  // a) Simulacro: el código de cliA está en la lista del entrenador, pero apuntando a cliA → se repone (no es de otro).
+  await preparar();
+  const sim = await restaurar(db, copia, { apply: false, excluir: ex, credenciales: true });
+  assert.ok(sim.credenciales.some(c => /^clients\/cliA\|code .*SE REPONE/.test(c)), sim.credenciales.join('\n'));
+  // b) Después de revisar el plan, el entrenador da ese código y una de esas cuentas a cliB → no se aplica nada.
+  await darleACliB();
+  await assert.rejects(() => restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ex, credenciales: true }), e => e.code === 'PLAN_DISTINTO');
+  assert.equal((await db.doc('clients/cliA').get()).exists, false);
+  await sinDuplicados();
+  // c) Lo mismo, pero DURANTE la aplicación (entre el plan del script y la transacción de cliA).
+  await preparar();
+  const sim2 = await restaurar(db, copia, { apply: false, excluir: ex, credenciales: true });
+  const inf = await restaurar(db, copia, { apply: true, plan: sim2.huella, excluir: ex, credenciales: true,
+    antesDeDocumento: async (col, id) => { if (id === 'cliA') await darleACliB(); } });
+  assert.equal((await db.doc('clients/cliA').get()).exists, false, 'cliA no se recrea con un código o una cuenta que ya son de otro');
+  assert.deepEqual(inf.noAplicados, ['clients/cliA']);
+  assert.equal(inf.motivos['clients/cliA'], 'credenciales');
+  assert.match(textoInforme(inf, { apply: true, modo: 'emulador', excluir: ex, credenciales: true }), /clients\/cliA.*NO restaurado.*otra ficha/);
+  await sinDuplicados();
+  // d) Repetido con un simulacro nuevo: cliA vuelve, sin lo que ya es de cliB y con lo que sigue siendo suyo.
+  const sim3 = await restaurar(db, copia, { apply: false, excluir: ex, credenciales: true });
+  await restaurar(db, copia, { apply: true, plan: sim3.huella, excluir: ex, credenciales: true });
+  const a = (await db.doc('clients/cliA').get()).data();
+  assert.equal(a.code, undefined);
+  assert.equal(a.authUid, 'uid-a');
+  assert.deepEqual(a.authUids, ['uid-a'], 'solo la cuenta que no es de otro');
+  await sinDuplicados();
+  // e) La lista de códigos del entrenador recreada con --con-credenciales: entrada a entrada, y con la misma
+  //    comprobación dentro de la transacción si otra ficha se queda un código mientras tanto.
+  await preparar();
+  await db.doc('clients/cliA').set(fichaCompleta());
+  await db.doc('clients/coach_data').delete();
+  const exM = ['clients/cliA', 'clients/cliB', ...FUERA];
+  const simM = await restaurar(db, copia, { apply: false, excluir: exM, credenciales: true });
+  const infM = await restaurar(db, copia, { apply: true, plan: simM.huella, excluir: exM, credenciales: true,
+    antesDeDocumento: async (col, id) => { if (id === 'coach_data') await db.doc('clients/cliC').set({ name: 'Cliente Ficticio C', code: 'FICT-B', _rev: 1 }); } });
+  assert.deepEqual(infM.noAplicados, ['clients/coach_data']);
+  assert.equal((await db.doc('clients/coach_data').get()).exists, false);
+  await sinDuplicados();
+  const simM2 = await restaurar(db, copia, { apply: false, excluir: exM, credenciales: true });
+  assert.ok(simM2.credenciales.some(c => /coach_data\|codes .*1 ya/.test(c)), simM2.credenciales.join('\n'));
+  await restaurar(db, copia, { apply: true, plan: simM2.huella, excluir: exM, credenciales: true });
+  const m = (await db.doc('clients/coach_data').get()).data();
+  assert.deepEqual(m.codes, { 'FICT-A': { client: 'cliA' }, 'FICT-A2': { client: 'cliA' } }, 'FICT-B ya es de cliC: no vuelve a apuntar a cliB');
+  await sinDuplicados();
+  await db.doc('clients/cliC').delete();
+});

@@ -293,9 +293,34 @@ test('R11 recrear una ficha que ya no existe NO revive credenciales (código, cu
   const q = CA.planificar('clients', { cli1: undefined }, { cli1: borrada }, [], { credenciales: true, todos });
   const w = q.docs[0].valor;
   assert.equal(w.code, undefined, 'ese código ya es de otro cliente');
-  assert.equal(w.codes, undefined, 'uno de sus códigos ya es de otro');
-  assert.equal(w.authUids, undefined, 'una de sus cuentas ya es de otro');
+  // Valor a valor: solo sale lo que ya es de otro (COD-1 y uid-1b); lo demás, que sigue siendo suyo, vuelve.
+  assert.deepEqual(w.codes, ['COD-1B'], 'uno de sus códigos ya es de otro: solo ese no vuelve');
+  assert.deepEqual(w.authUids, ['uid-1'], 'una de sus cuentas ya es de otro: solo esa no vuelve');
   assert.equal(w.authUid, 'uid-1');
   assert.deepEqual(w.push, { token: 'push-viejo' });
   assert.notEqual(q.huella, p.huella);
+});
+
+test('R12 --con-credenciales: «de otra ficha» es a quién DA ACCESO el código ahora (la lista del entrenador cuenta por su destino)', () => {
+  const borrada = Object.assign(ficha(), { authUids: ['uid-1'], push: { token: 'push-viejo' } });
+  // La lista del entrenador sigue diciendo que COD-1 es de cli1: no es de otra ficha, se repone.
+  const meta = { codes: { 'COD-1': { client: 'cli1' }, 'COD-2': { client: 'cli2' } } };
+  const q = CA.planificar('clients', { cli1: undefined }, { cli1: borrada }, [], { credenciales: true, todos: { coach_data: meta, cli2: { name: 'Otro' } } });
+  assert.equal(q.docs[0].valor.code, 'COD-1');
+  // Si la lista ya lo da a cli2, no.
+  const q2 = CA.planificar('clients', { cli1: undefined }, { cli1: borrada }, [], { credenciales: true, todos: { coach_data: { codes: { 'COD-1': { client: 'cli2' } } } } });
+  assert.equal(q2.docs[0].valor.code, undefined);
+  assert.equal(q2.docs[0].credenciales.find(c => c.campo === 'code').motivo, 'en-uso');
+  // La lista del entrenador recreada: entrada a entrada. COD-2 ya lo tiene cli3 en su ficha → solo sale esa.
+  const copiaMeta = { codes: { 'COD-1': { client: 'cli1' }, 'COD-2': { client: 'cli2' } }, exLibrary: [] };
+  const r = CA.planificar('clients', { coach_data: undefined }, { coach_data: copiaMeta }, [],
+    { credenciales: true, todos: { cli1: { code: 'COD-1' }, cli2: { name: 'B' }, cli3: { code: 'COD-2' } } });
+  assert.deepEqual(r.docs[0].valor.codes, { 'COD-1': { client: 'cli1' } });
+  const cr = r.docs[0].credenciales.find(c => c.campo === 'codes');
+  assert.equal(cr.motivo, 'en-uso-parcial');
+  assert.equal(cr.quitados, 1);
+  // Y nunca dos fichas para un mismo valor: con todo ocupado, nada vuelve.
+  const r2 = CA.planificar('clients', { coach_data: undefined }, { coach_data: copiaMeta }, [],
+    { credenciales: true, todos: { cli9: { code: 'COD-1', authUids: [] }, cli8: { codes: ['COD-2'] } } });
+  assert.equal(r2.docs[0].valor.codes, undefined);
 });

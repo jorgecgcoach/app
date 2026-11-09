@@ -11,7 +11,9 @@
    3) APLICAR: --apply --plan HUELLA. Solo se aplica si el plan sigue siendo EXACTAMENTE el revisado
       (mismas exclusiones y la nube sin cambios en lo que afecta). Si no coincide, no escribe nada.
       Además, en cada documento se vuelve a calcular dentro de la transacción: si la nube cambió entre
-      medias, ese documento NO se toca y se informa.
+      medias, ese documento NO se toca y el informe lo marca como RESTAURACIÓN PARCIAL, con el motivo.
+      Con --con-credenciales, dentro de esa transacción también se vuelve a mirar a quién da acceso cada
+      código o cuenta: si alguno ha pasado a otra ficha, esa ficha no se recrea (nunca se duplican).
    Fichas que ya no existen: se recrean SIN sus credenciales ni vinculaciones (código, códigos, cuentas,
    push; PIN y lista de códigos del entrenador). Solo para recuperar un desastre: --con-credenciales, y
    aun así no se repone un código o una cuenta que ya use otra ficha.
@@ -61,12 +63,12 @@ async function planificar(db, copia, opciones) {
 async function restaurar(db, copia, opciones) {
   opciones = opciones || {};
   const plan = await planificar(db, copia, opciones);
-  const informe = { huella: plan.huella, documentosNuevos: 0, documentosConAñadidos: 0, sinCambios: 0, cambios: [], credenciales: [], noAplicados: [], aplicado: false };
+  const informe = { huella: plan.huella, documentosNuevos: 0, documentosConAñadidos: 0, sinCambios: 0, cambios: [], credenciales: [], aplicados: [], noAplicados: [], motivos: {}, parcial: false, aplicado: false };
   plan.planes.forEach(function (p) {
     p.docs.forEach(function (d) {
       if (d.nuevo) informe.documentosNuevos++; else informe.documentosConAñadidos++;
       d.cambios.forEach(function (c) { informe.cambios.push(c.id + '  (' + c.tipo + ')'); });
-      (d.credenciales || []).forEach(function (c) { informe.credenciales.push(p.col + '/' + d.id + '|' + c.campo + '  (' + (c.repuesta ? 'SE REPONE' : c.motivo === 'en-uso' ? 'no: ya la usa otra ficha' : 'no se repone') + ')'); });
+      (d.credenciales || []).forEach(function (c) { informe.credenciales.push(p.col + '/' + d.id + '|' + c.campo + '  (' + (c.motivo === 'en-uso-parcial' ? 'SE REPONE en parte: ' + c.quitados + ' ya los usa otra ficha' : c.repuesta ? 'SE REPONE' : c.motivo === 'en-uso' ? 'no: ya la usa otra ficha' : 'no se repone') + ')'); });
     });
   });
   if (!opciones.apply) return informe;
@@ -78,31 +80,71 @@ async function restaurar(db, copia, opciones) {
   for (const p of plan.planes) {
     for (const d of p.docs) {
       const ref = db.collection(p.col).doc(d.id);
+      // Solo para las pruebas: simula otro dispositivo que escribe entre un documento y el siguiente.
+      if (typeof opciones.antesDeDocumento === 'function') await opciones.antesDeDocumento(p.col, d.id);
       // Se compara ruta Y contenido de cada cambio (las firmas), no solo las rutas.
       const esperado = d.cambios.map(function (c) { return c.firma; }).sort().join('\n');
       const r = await db.runTransaction(async function (t) {
         const snap = await t.get(ref);
         const actual = snap.exists ? snap.data() : undefined;
-        // Ficha que se recrea: solo si sigue sin existir, y con el valor exacto del plan revisado
-        // (incluida la decisión sobre credenciales).
-        if (d.nuevo) {
-          if (actual !== undefined) return { ok: false };
-          t.set(ref, Object.assign({}, d.valor, p.col === 'clients' ? lib.selloRestauracion(undefined) : {}));
-          return { ok: true };
+        // Ficha que se recrea: solo si sigue sin existir.
+        if (d.nuevo && actual !== undefined) return { ok: false, motivo: 'ya-existe' };
+        // Si se reponen credenciales, se vuelve a mirar DENTRO de la transacción a quién da acceso cada código
+        // o cuenta (toda la colección): si alguno ha pasado a otra ficha desde el plan, no se recrea. Leerla aquí
+        // hace que la transacción se repita si otra ficha cambia antes de escribir.
+        let op;
+        if (d.nuevo && opciones.credenciales && (d.credenciales || []).length) {
+          const todos = {};
+          (await t.get(db.collection(p.col))).forEach(function (x) { todos[x.id] = x.data(); });
+          op = { credenciales: true, todos: todos };
         }
-        const rehecho = aditiva.planificar(p.col, { [d.id]: actual }, { [d.id]: copia.colecciones[p.col][d.id] }, opciones.excluir);
+        const rehecho = aditiva.planificar(p.col, { [d.id]: actual }, { [d.id]: copia.colecciones[p.col][d.id] }, opciones.excluir, op);
         const doc = rehecho.docs[0];
         const ahora = doc ? doc.cambios.map(function (c) { return c.firma; }).sort().join('\n') : '';
-        if (ahora !== esperado) return { ok: false };                       // la nube cambió: no se toca
+        if (ahora !== esperado) return { ok: false, motivo: d.nuevo ? 'credenciales' : 'cambio-nube' };   // no se toca
         const extra = p.col === 'clients' ? lib.selloRestauracion(actual) : {};
         t.set(ref, Object.assign({}, doc.valor, extra));
         return { ok: true };
       });
-      if (!r.ok) informe.noAplicados.push(p.col + '/' + d.id);
+      const ruta = p.col + '/' + d.id;
+      if (r.ok) informe.aplicados.push(ruta);
+      else { informe.noAplicados.push(ruta); informe.motivos[ruta] = r.motivo; }
     }
   }
   informe.aplicado = true;
+  informe.parcial = informe.noAplicados.length > 0;
   return informe;
+}
+
+const MOTIVOS = {
+  'cambio-nube': 'cambió en la nube durante la restauración (otro dispositivo); no se ha tocado',
+  'ya-existe': 'se ha creado en la nube durante la restauración; no se ha tocado',
+  'credenciales': 'un código o una cuenta suya ha pasado a otra ficha durante la restauración; no se ha recreado'
+};
+/* Texto del informe (lo que imprime la línea de órdenes). Nunca lleva valores: solo identificadores y rutas. */
+function textoInforme(inf, o) {
+  o = o || {};
+  const l = [];
+  const exclusiones = (o.excluir || []).length;
+  if (o.apply && inf.parcial) l.push('⚠ RESTAURACIÓN PARCIAL: ' + inf.noAplicados.length + ' documento(s) NO restaurado(s). Lee el final.');
+  l.push((o.apply ? (inf.parcial ? 'APLICADO EN PARTE' : 'APLICADO') : 'SIMULACRO (no se ha escrito nada)') + ' en ' + (o.modo || '?') + '. Exclusiones: ' + exclusiones + '.');
+  l.push('Documentos que se recrean: ' + inf.documentosNuevos + '. Con datos que se añaden: ' + inf.documentosConAñadidos + '.');
+  l.push('Cambios (' + inf.cambios.length + ')' + (o.apply ? ':' : '. Revisa y excluye lo que se borró a propósito:'));
+  inf.cambios.forEach(function (c) { l.push('  + ' + c); });
+  if (inf.credenciales.length) {
+    l.push('Credenciales de fichas que se recrean (' + (o.credenciales ? 'con --con-credenciales' : 'sin --con-credenciales: ninguna se repone') + '):');
+    inf.credenciales.forEach(function (c) { l.push('  · ' + c); });
+  }
+  l.push('HUELLA DEL PLAN: ' + inf.huella + (o.apply ? '' : '   → para aplicar: --apply --plan ' + inf.huella + ' (con las mismas --excluir' + (o.credenciales ? ' y --con-credenciales' : '') + ')'));
+  if (o.apply) {
+    inf.aplicados.forEach(function (d) { l.push('  ✔ ' + d + '  restaurado'); });
+    if (inf.parcial) {
+      l.push('⚠ NO restaurados (' + inf.noAplicados.length + '). Lo demás sí se ha restaurado, documento a documento:');
+      inf.noAplicados.forEach(function (d) { l.push('  ! ' + d + '  NO restaurado: ' + (MOTIVOS[inf.motivos[d]] || inf.motivos[d])); });
+      l.push('Para terminarlo: repite el simulacro (dará otra huella) y revísalo antes de aplicar.');
+    }
+  }
+  return l.join('\n');
 }
 
 function leerExclusiones() {
@@ -126,21 +168,9 @@ async function main() {
   const excluir = leerExclusiones();
   const credenciales = process.argv.includes('--con-credenciales');
   const inf = await restaurar(admin.firestore(), copia, { apply, plan: planRevisado || undefined, solo: arg('--solo'), excluir, credenciales });
-  console.log((apply ? 'APLICADO' : 'SIMULACRO (no se ha escrito nada)') + ' en ' + modo + '. Exclusiones: ' + excluir.length + '.');
-  console.log('Documentos que se recrean: ' + inf.documentosNuevos + '. Con datos que se añaden: ' + inf.documentosConAñadidos + '.');
-  console.log('Cambios (' + inf.cambios.length + '). Revisa y excluye lo que se borró a propósito:');
-  inf.cambios.forEach(function (c) { console.log('  + ' + c); });
-  if (inf.credenciales.length) {
-    console.log('Credenciales de fichas que se recrean (' + (credenciales ? 'con --con-credenciales' : 'sin --con-credenciales: ninguna se repone') + '):');
-    inf.credenciales.forEach(function (c) { console.log('  · ' + c); });
-  }
-  console.log('HUELLA DEL PLAN: ' + inf.huella + (apply ? '' : '   → para aplicar: --apply --plan ' + inf.huella + ' (con las mismas --excluir' + (credenciales ? ' y --con-credenciales' : '') + ')'));
-  if (inf.noAplicados.length) {
-    console.log('⚠ NO aplicados porque la nube cambió durante la restauración (no se han tocado): ' + inf.noAplicados.length);
-    inf.noAplicados.forEach(function (d) { console.log('  ! ' + d); });
-    process.exitCode = 4;
-  }
+  console.log(textoInforme(inf, { apply, modo, excluir, credenciales }));
+  if (inf.parcial) process.exitCode = 4;
 }
 
-module.exports = { restaurar, planificar };
+module.exports = { restaurar, planificar, textoInforme };
 if (require.main === module) main().catch(function (e) { console.error(e && e.message ? e.message : e); process.exit(e && e.code === 'SIN_PERMISO' ? 2 : (e && e.code === 'PLAN_DISTINTO' ? 5 : 1)); });

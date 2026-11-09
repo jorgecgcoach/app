@@ -2511,6 +2511,7 @@ function defaultHabits(){return {items:[
  ],log:{}}}
 function emptyBlock(){
  return {
+   _logv:2,                   // ← el registro ya nace en el formato actual (ver migrateLogKeys)
    log:{},                    // ← ninguna serie prerrellenada ni marcada
    tracking:{},               // ← ningún seguimiento de ejemplo
    anthro:{},
@@ -2584,7 +2585,12 @@ function migrateLogKeys(b){
  const p=b.data.program;
  const oldLog=(b.data.log&&typeof b.data.log==='object')?b.data.log:{};
  const oldNotes=(b.data.exNotes&&typeof b.data.exNotes==='object')?b.data.exNotes:{};
+ // Lo que YA está en el formato actual se conserva siempre. Un bloque puede llegar sin la
+ // marca _logv (los creados desde el guardado seguro no la subían) y sin esto se vaciaba
+ // el registro del cliente al cargar o al recibir un cambio de otro dispositivo.
  const newLog={},newNotes={};
+ Object.keys(oldLog).forEach(k=>{if(/^[^|]+\|\d+$/.test(k)&&!k.startsWith('__none'))newLog[k]=oldLog[k]});
+ Object.keys(oldNotes).forEach(k=>{if(k.indexOf('|')<0)newNotes[k]=oldNotes[k]});
  if(p&&Array.isArray(p.weeks)){
   p.weeks.forEach((wk,wi)=>{
    const w=wi+1;
@@ -2595,10 +2601,10 @@ function migrateLogKeys(b){
      const ns=(ex.series&&ex.series.length)?ex.series.length:(+ex.sets||0);
      for(let s=0;s<ns;s++){
       const v=oldLog[`${di}|${ei}|${s}|${w}`];
-      if(v!==undefined&&v!==null)newLog[`${ex.uid}|${s}`]=v;
+      if(v!==undefined&&v!==null&&newLog[`${ex.uid}|${s}`]===undefined)newLog[`${ex.uid}|${s}`]=v;
      }
      const nv=oldNotes[`${di}|${ei}|${w}`];
-     if(nv!==undefined&&nv!==null)newNotes[ex.uid]=nv;
+     if(nv!==undefined&&nv!==null&&newNotes[ex.uid]===undefined)newNotes[ex.uid]=nv;
     });
    });
   });
@@ -3470,7 +3476,12 @@ async function migratePhotosToStorage(){
 }
 /* ---- COPIA DE SEGURIDAD (exportar / importar) — red de seguridad del coach ---- */
 function exportBackup(){
-  const dump={_type:'jcgcoach_backup',exportedAt:new Date().toISOString(),meta:{active:DATA.active,coachCode:DATA.coachCode,codes:DATA.codes,exLibrary:DATA.exLibrary},clients:DATA.clients};
+  // Copia COMPLETA: también plantillas y negocio (contratos, pagos, CRM), que antes se quedaban fuera.
+  const N=DATA.negocio||{};const len=x=>Array.isArray(x)?x.length:0;
+  const dump={_type:'jcgcoach_backup',_v:2,exportedAt:new Date().toISOString(),
+    meta:{active:DATA.active,coachCode:DATA.coachCode,codes:DATA.codes,exLibrary:DATA.exLibrary,templates:DATA.templates,negocio:DATA.negocio},
+    clients:DATA.clients,
+    resumen:{clientes:Object.keys(DATA.clients||{}).length,codigos:Object.keys(DATA.codes||{}).length,biblioteca:len(DATA.exLibrary),plantillas:len((DATA.templates||{}).workouts)+len((DATA.templates||{}).diets),pagos:len(N.payments),contratos:len(N.contracts),contactos:len(N.contacts)}};
   const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='copia-jorgecgcoach-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json';

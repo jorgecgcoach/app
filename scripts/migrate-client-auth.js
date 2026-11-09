@@ -51,30 +51,34 @@ async function planMigration(dump) {
       withoutCode++;
       continue;
     }
-    if (list.length > 1) warnings.push({ clientId: cid, kind: 'varios-codigos' });
-    const code = list[0];
-    if (code.length < 3) {
-      warnings.push({ clientId: cid, kind: 'demasiado-corto' });
-      rows.push({ clientId: cid, codeLength: code.length, dniLike: false, action: 'skip', reason: 'demasiado-corto' });
-      continue;
+    // Cada código que hoy funciona tendrá su cuenta: ningún cliente deja de poder entrar.
+    if (list.length > 1) warnings.push({ clientId: cid, kind: 'varios-codigos (' + list.length + ', todos seguirán valiendo)' });
+    for (let k = 0; k < list.length; k++) {
+      const code = list[k];
+      if (code.length < 3) {
+        warnings.push({ clientId: cid, kind: 'demasiado-corto' });
+        rows.push({ clientId: cid, codeIndex: k, codeLength: code.length, dniLike: false, action: 'skip', reason: 'demasiado-corto' });
+        continue;
+      }
+      const email = await id.clientEmailFromCode(code);
+      let action = 'create';
+      let reason = '';
+      if (seenEmail.has(email) && seenEmail.get(email) !== cid) {
+        action = 'skip';
+        reason = 'codigo-duplicado';
+        warnings.push({ clientId: cid, kind: 'codigo-duplicado (lo usa también otra ficha)' });
+      } else {
+        seenEmail.set(email, cid);
+      }
+      rows.push({
+        clientId: cid,
+        codeIndex: k,
+        codeLength: code.length,
+        dniLike: id.looksLikeBareDni(code),
+        action: action,
+        reason: reason
+      });
     }
-    const email = await id.clientEmailFromCode(code);
-    let action = 'create';
-    let reason = '';
-    if (seenEmail.has(email)) {
-      action = 'skip';
-      reason = 'codigo-duplicado';
-      warnings.push({ clientId: cid, kind: 'codigo-duplicado' });
-    } else {
-      seenEmail.set(email, cid);
-    }
-    rows.push({
-      clientId: cid,
-      codeLength: code.length,
-      dniLike: id.looksLikeBareDni(code),
-      action: action,
-      reason: reason
-    });
   }
   Object.keys(collected.byClient).forEach(function (cid) {
     if (!collected.clients[cid]) warnings.push({ clientId: cid, kind: 'codigo-sin-ficha' });
@@ -153,42 +157,52 @@ async function applyMigration(dump) {
   let existed = 0;
   let linked = 0;
   let skipped = 0;
-  const seenEmail = new Set();
+  const seenEmail = new Map();
+  const unlinked = [];
   for (const cid of Object.keys(collected.clients)) {
-    const list = collected.byClient[cid] || [];
-    if (!list.length || list[0].length < 3) {
+    const list = (collected.byClient[cid] || []).filter(function (c) { return c.length >= 3; });
+    if (!list.length) {
       skipped++;
       continue;
     }
-    const code = list[0];
-    const email = await id.clientEmailFromCode(code);
-    if (seenEmail.has(email)) {
-      skipped++;
-      continue;
-    }
-    seenEmail.add(email);
-    const password = id.clientPasswordFromCode(code);
-    const existingUid = collected.clients[cid] && collected.clients[cid].authUid;
-    let user;
-    try {
-      user = await admin.auth().createUser({ email: email, password: password });
-      created++;
-    } catch (e) {
-      if (e && e.code === 'auth/email-already-exists') {
-        user = await admin.auth().getUserByEmail(email);
-        existed++;
-      } else {
-        throw e;
+    const uids = [];
+    for (const code of list) {
+      const email = await id.clientEmailFromCode(code);
+      if (seenEmail.has(email) && seenEmail.get(email) !== cid) {
+        skipped++;
+        continue;
       }
+      seenEmail.set(email, cid);
+      const password = id.clientPasswordFromCode(code);
+      let user;
+      try {
+        user = await admin.auth().createUser({ email: email, password: password });
+        created++;
+      } catch (e) {
+        if (e && e.code === 'auth/email-already-exists') {
+          user = await admin.auth().getUserByEmail(email);
+          existed++;
+        } else {
+          throw e;
+        }
+      }
+      if (uids.indexOf(user.uid) < 0) uids.push(user.uid);
     }
-    if (existingUid && existingUid !== user.uid) {
+    if (!uids.length) continue;
+    const existingUid = collected.clients[cid] && collected.clients[cid].authUid;
+    if (existingUid && uids.indexOf(existingUid) < 0) {
+      // Ya estaba vinculada a otra cuenta (p. ej. el entrenador guardó un código nuevo con Auth): no se toca.
+      unlinked.push(cid);
       skipped++;
       continue;
     }
-    await admin.firestore().collection('clients').doc(cid).set({ authUid: user.uid }, { merge: true });
+    // Solo se añaden estos campos; el resto de la ficha no se toca (merge).
+    const patch = { authUid: existingUid || uids[0] };
+    if (uids.length > 1) patch.authUids = uids;
+    await admin.firestore().collection('clients').doc(cid).set(patch, { merge: true });
     linked++;
   }
-  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped };
+  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length };
 }
 
 async function main() {

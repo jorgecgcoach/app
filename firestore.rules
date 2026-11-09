@@ -38,11 +38,23 @@ service cloud.firestore {
     // coach_data no lleva authUid. Un where('authUid') no puede alcanzarlo
     // y un cliente no puede hacerse dueño de la meta del entrenador.
     function coachMetaWriteOk(clientId) {
-      return clientId != 'coach_data' || !('authUid' in request.resource.data);
+      return clientId != 'coach_data'
+        || (!('authUid' in request.resource.data) && !('authUids' in request.resource.data));
     }
 
+    // authUid: la cuenta del código principal. authUids (opcional): todas las cuentas del
+    // cliente cuando tenía más de un código válido; así ninguno deja de funcionar al migrar.
     function ownsClient() {
-      return signedIn() && resource.data.authUid == request.auth.uid;
+      return signedIn() && (
+        resource.data.get('authUid', null) == request.auth.uid
+        || request.auth.uid in resource.data.get('authUids', [])
+      );
+    }
+
+    // El cliente no puede cambiar quién es el dueño de su ficha.
+    function ownersUnchanged() {
+      return request.resource.data.get('authUid', null) == resource.data.get('authUid', null)
+        && request.resource.data.get('authUids', []) == resource.data.get('authUids', []);
     }
 
     match /clients/{clientId} {
@@ -52,7 +64,7 @@ service cloud.firestore {
 
       allow update: if coachMetaWriteOk(clientId) && (
         isCoach()
-        || (ownsClient() && request.resource.data.authUid == resource.data.authUid)
+        || (ownsClient() && ownersUnchanged())
       );
 
       allow delete: if isCoach();

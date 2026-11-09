@@ -28,7 +28,7 @@ test.beforeEach(async () => {
   await env.withSecurityRulesDisabled(async ctx => {
     const db = ctx.firestore();
     const s = ctx.storage();
-    await setDoc(doc(db, 'clients/client-a'), { name: 'Cliente Ficticio A', authUid: 'uid-a' });
+    await setDoc(doc(db, 'clients/client-a'), { name: 'Cliente Ficticio A', authUid: 'uid-a', authUids: ['uid-a', 'uid-a2'] });
     await setDoc(doc(db, 'clients/client-b'), { name: 'Cliente Ficticio B', authUid: 'uid-b' });
     await s.ref('clients/client-a/photos/p1.jpg').putString('foto-ficticia', 'raw', JPG);
     await s.ref('clients/client-a/analitica/a1.pdf').putString('pdf-ficticio', 'raw', PDF);
@@ -65,6 +65,13 @@ test('cliente A: su carpeta sí; la de B no', async () => {
   await assertFails(clienteB().ref('clients/client-a/analitica/a1.pdf').getMetadata());
   await assertFails(clienteB().ref('clients/client-a/photos/intruso.jpg').putString('x', 'raw', JPG));
   await assertFails(clienteB().ref('clients/client-a/photos/p1.jpg').delete());
+});
+
+test('cliente A con su segundo código (authUids): también su carpeta, y solo la suya', async () => {
+  const a2 = st(env.authenticatedContext('uid-a2'));
+  await assertSucceeds(a2.ref('clients/client-a/photos/p1.jpg').getMetadata());
+  await assertSucceeds(a2.ref('clients/client-a/photos/otra.jpg').putString('x', 'raw', JPG));
+  await assertFails(a2.ref('clients/client-b/photos/x.jpg').putString('x', 'raw', JPG));
 });
 
 test('una cuenta cualquiera (no cliente) no ve nada', async () => {

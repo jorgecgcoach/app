@@ -117,7 +117,7 @@ test('el cliente A lee y escribe su ficha, no la de B ni coach_data', async func
   const own = await assertSucceeds(getDoc(doc(db, 'clients/client-a')));
   assert.equal(own.get('name'), 'Cliente Ejemplo A');
   assert.equal(own.get('push').tokens[0], 'token-ficticio-a');
-  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { name: 'Cliente Ejemplo A2' }));
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true }));
   await assertFails(getDoc(doc(db, 'clients/client-b')));
   await assertFails(getDoc(doc(db, 'clients/coach_data')));
   await assertFails(updateDoc(doc(db, 'clients/client-b'), { name: 'no' }));
@@ -161,7 +161,7 @@ test('cliente con varios códigos (authUids): su segunda cuenta lee, consulta y 
   });
   const db = fsdb(testEnv.authenticatedContext('uid-a2'));
   await assertSucceeds(getDoc(doc(db, 'clients/client-a')));
-  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { name: 'Cambio propio' }));
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true }));
   const snap = await assertSucceeds(getDocs(query(collection(db, 'clients'), where('authUids', 'array-contains', 'uid-a2'))));
   assert.deepEqual(snap.docs.map(function (d) { return d.id; }), ['client-a']);
   await assertFails(getDoc(doc(db, 'clients/client-b')));

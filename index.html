@@ -2671,14 +2671,20 @@ let _loadGen=0;
 function loadStillCurrent(gen){
   if(gen!==undefined&&gen!==_loadGen){const e=new Error('carga abandonada (llegó tarde)');e._stage='fetch';e._abandoned=true;throw e;}
 }
-async function loadDataFromFirestore(){
+// Envuelve una carga: le da su número y un límite de 30 s. Si se agota el tiempo, se cierra sesión o
+// empieza otra carga, la anterior queda abandonada y ya no puede tocar DATA, SESSION ni la base.
+// La usan la carga del entrenador y la entrada del cliente con Auth (C1).
+async function runGuardedLoad(fn){
   const gen=++_loadGen;
   let t=null;
   const timeoutPromise=new Promise((_,rej)=>{t=setTimeout(()=>{if(gen===_loadGen)_loadGen++;rej(new Error('Timeout Firestore 30s'));},30000);});
-  const real=loadDataFirestoreReal(gen);
+  const real=fn(gen);
   real.catch(()=>{}); // si se abandona, su error tardío no debe quedar suelto
-  try{ await Promise.race([real,timeoutPromise]); }
+  try{ return await Promise.race([real,timeoutPromise]); }
   finally{ clearTimeout(t); }
+}
+async function loadDataFromFirestore(){
+  await runGuardedLoad(gen=>loadDataFirestoreReal(gen));
 }
 async function loadDataFirestoreReal(gen){
   await loadMeta(gen);
@@ -8612,13 +8618,18 @@ async function loadCoachDataAfterAuth(user){
   scheduleCatalogSync();
   return DATA;
 }
-async function loadClientAfterAuth(user){
+// Con las mismas protecciones que la carga normal (PR #9): límite de 30 s y, si la carga queda
+// abandonada (tiempo agotado, cerrar sesión, volver a entrar), lo que llegue tarde no toca nada.
+function loadClientAfterAuth(user){ return runGuardedLoad(gen=>loadClientAfterAuthReal(user,gen)); }
+async function loadClientAfterAuthReal(user,gen){
   // Una sola consulta por authUid. No lee coach_data ni la lista de códigos.
   // El catálogo de vídeos (nombre + vídeo general, sin datos privados) se pide a la vez.
   const catP=loadClientCatalog();
+  catP.catch(()=>{});
   let q=await window.db.collection('clients').where('authUid','==',user.uid).limit(1).get();
+  loadStillCurrent(gen);
   // Clientes que tenían más de un código: cualquiera de sus cuentas está en authUids.
-  if(q.empty) q=await window.db.collection('clients').where('authUids','array-contains',user.uid).limit(1).get();
+  if(q.empty){ q=await window.db.collection('clients').where('authUids','array-contains',user.uid).limit(1).get(); loadStillCurrent(gen); }
   if(q.empty){
     try{ await firebase.auth().signOut(); }catch(_){}
     const err=new Error('no-profile');
@@ -8626,7 +8637,9 @@ async function loadClientAfterAuth(user){
     throw err;
   }
   const d=q.docs[0];
-  DATA={clients:{},active:{c:d.id,b:null},coachCode:'',codes:{},exLibrary:await catP,templates:{workouts:[],diets:[]},negocio:normNegocio(null)};
+  const lib=await catP;
+  loadStillCurrent(gen); // nada de lo de abajo se hace si esta carga ya no es la vigente
+  DATA={clients:{},active:{c:d.id,b:null},coachCode:'',codes:{},exLibrary:lib,templates:{workouts:[],diets:[]},negocio:normNegocio(null)};
   DATA.clients[d.id]=d.data();
   const sync=getSync(); if(sync) sync.setBase(d.id, d.data());
   SESSION={role:'client', clientId:d.id, authUid:user.uid};
@@ -8667,7 +8680,12 @@ async function initAppWithAuth(){
     console.info('[auth] sesión restaurada en '+Math.round(performance.now()-t0)+' ms');
   }catch(e){
     console.warn('[auth] sesión', (e&&e.code)||'error');
-    SESSION=null; Store.set('jcg_session', null);
+    SESSION=null;
+    // Sin conexión o tiempo agotado: NO se cierra la sesión de Firebase. «Reintentar» vuelve a entrar
+    // solo, sin pedir otra vez el código (y sin tocar lo pendiente de guardar en este dispositivo).
+    const red=e&&(e._abandoned||/Timeout/.test(String(e.message||''))||e.code==='unavailable'||e.code==='deadline-exceeded'||e.code==='auth/network-request-failed');
+    if(red){ bootError('No se han podido cargar tus datos. Revisa tu conexión a internet.'); return; }
+    Store.set('jcg_session', null);
     try{ if(firebase.auth) await firebase.auth().signOut(); }catch(_){}
     if(e&&e.userMessage){
       DATA=freshData(); DATA.clients={};
@@ -8701,7 +8719,8 @@ async function loginClientWithAuth(btn){
     try{ if(firebase.auth) await firebase.auth().signOut(); }catch(_){}
     setBtnLoading(btn,false);
     const too=e&&(e.code==='auth/too-many-requests');
-    toast((e&&e.userMessage)||(too?'Demasiados intentos. Espera un minuto y prueba otra vez.':'Código no válido. Revisa que esté bien escrito.'),'bad');
+    const red=e&&(e._abandoned||/Timeout/.test(String(e.message||''))||e.code==='auth/network-request-failed'||e.code==='unavailable'||e.code==='deadline-exceeded');
+    toast((e&&e.userMessage)||(too?'Demasiados intentos. Espera un minuto y prueba otra vez.':red?'No se ha podido conectar. Revisa la conexión y vuelve a intentarlo.':'Código no válido. Revisa que esté bien escrito.'),'bad');
   }
 }
 async function submitCoachWithAuth(btn){

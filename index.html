@@ -3476,7 +3476,12 @@ async function migratePhotosToStorage(){
 }
 /* ---- COPIA DE SEGURIDAD (exportar / importar) — red de seguridad del coach ---- */
 function exportBackup(){
-  const dump={_type:'jcgcoach_backup',exportedAt:new Date().toISOString(),meta:{active:DATA.active,coachCode:DATA.coachCode,codes:DATA.codes,exLibrary:DATA.exLibrary},clients:DATA.clients};
+  // Copia COMPLETA: también plantillas y negocio (contratos, pagos, CRM), que antes se quedaban fuera.
+  const N=DATA.negocio||{};const len=x=>Array.isArray(x)?x.length:0;
+  const dump={_type:'jcgcoach_backup',_v:2,exportedAt:new Date().toISOString(),
+    meta:{active:DATA.active,coachCode:DATA.coachCode,codes:DATA.codes,exLibrary:DATA.exLibrary,templates:DATA.templates,negocio:DATA.negocio},
+    clients:DATA.clients,
+    resumen:{clientes:Object.keys(DATA.clients||{}).length,codigos:Object.keys(DATA.codes||{}).length,biblioteca:len(DATA.exLibrary),plantillas:len((DATA.templates||{}).workouts)+len((DATA.templates||{}).diets),pagos:len(N.payments),contratos:len(N.contracts),contactos:len(N.contacts)}};
   const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='copia-jorgecgcoach-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json';

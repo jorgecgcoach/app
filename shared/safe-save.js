@@ -30,12 +30,34 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const SYNC_FIELDS = ['_rev', '_updatedAt', '_updatedBy'];
+  // _writers: marcas de las últimas escrituras (la más reciente al final). Sirve
+  // para reconocer un envío propio cuya respuesta se perdió aunque otro
+  // dispositivo haya escrito después (ver ownAttempt).
+  const SYNC_FIELDS = ['_rev', '_updatedAt', '_updatedBy', '_writers'];
+  const WRITERS_KEEP = 12;
+  function writersOf(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw._writers)) return raw._writers.filter(t => typeof t === 'string');
+    return raw._updatedBy ? [raw._updatedBy] : [];
+  }
+  function syncStamp(raw, tag, rev, at) {
+    const w = writersOf(raw).filter(t => t !== tag);
+    w.push(tag);
+    return { _rev: rev, _updatedAt: at, _updatedBy: tag, _writers: w.slice(-WRITERS_KEEP) };
+  }
   const KEY_FIELDS = ['id', 'uid', 'date'];
   const DOC_LIMIT = 1048487;
   const JOURNAL_PREFIX = 'jcg_pending:';
   const TAB_PREFIX = 'jcg_tab:';
   const TAB_STALE_MS = 15000;
+
+  function randomId() {
+    try {
+      const c = typeof crypto !== 'undefined' ? crypto : (typeof globalThis !== 'undefined' && globalThis.crypto);
+      if (c && c.getRandomValues) return Array.from(c.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
+    } catch (_) {}
+    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  }
 
   function isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -401,7 +423,7 @@
 
     function st(id) {
       let s = states.get(id);
-      if (!s) { s = { known: false, base: null, rev: 0, inflight: null, again: false, blocked: null, remoteQueued: undefined, latestRemote: undefined, lastError: null, attempts: [], serverTag: null }; states.set(id, s); }
+      if (!s) { s = { known: false, base: null, rev: 0, inflight: null, again: false, blocked: null, remoteQueued: undefined, latestRemote: undefined, lastError: null, attempts: [], serverWriters: [] }; states.set(id, s); }
       return s;
     }
     function err(kind, extra) { const e = new Error(kind); e.kind = kind; Object.assign(e, extra || {}); return e; }
@@ -419,7 +441,7 @@
       s.blocked = null;
       s.absorbed = null;
       s.attempts = [];
-      s.serverTag = (raw && raw._updatedBy) || null;
+      s.serverWriters = writersOf(raw);
     }
     function forget(id) { states.delete(id); journal.clear(id); }
 
@@ -445,18 +467,26 @@
        Si una transacción llega a la nube pero la respuesta se pierde (corte,
        tiempo agotado), la base se queda atrás y el siguiente cambio del mismo
        campo parecería "cambiado en otro dispositivo". Cada envío lleva una
-       marca única en _updatedBy (pestaña + contador). Solo cuando la nube
-       trae EXACTAMENTE esa marca se sabe, sin adivinar, que la versión del
-       servidor es la que escribió ese envío; entonces los cambios pendientes
-       se calculan desde lo que se envió. Con cualquier otra marca (otro
-       dispositivo escribió después, o el envío nunca llegó) todo sigue igual
-       que antes: base de siempre y conflicto si algo choca. */
+       marca única (pestaña ~ instancia aleatoria ~ contador) que se escribe
+       en _updatedBy y se añade a _writers (las últimas escrituras). Una marca
+       solo entra en _writers cuando su escritura se confirma en el servidor,
+       así que si la nube trae la marca de un envío de aquí, ese envío llegó,
+       sin adivinar. Entonces los pendientes se cuentan desde lo que se envió
+       y no desde la base vieja. Cada cambio se sigue comprobando campo a
+       campo contra la nube: si otro dispositivo cambió después ese mismo
+       dato, sigue siendo conflicto. Sin marca propia, todo como antes. */
     const MAX_ATTEMPTS = 20;
     let attemptSeq = 0;
+    // Identificador aleatorio de esta instancia (cada carga de la app es una
+    // nueva): aunque dos dispositivos generasen la misma tabId, sus marcas no
+    // coinciden. 64 bits del generador criptográfico si existe.
+    const instanceId = randomId();
+    // El envío de aquí más reciente cuya marca está en la nube.
     function ownAttempt(s, raw) {
-      const tag = raw && raw._updatedBy;
-      if (!tag || !s.attempts.length) return null;
-      return s.attempts.find(a => a.tag === tag) || null;
+      if (!s.attempts.length) return null;
+      const w = writersOf(raw);
+      for (let i = s.attempts.length - 1; i >= 0; i--) if (w.indexOf(s.attempts[i].tag) >= 0) return s.attempts[i];
+      return null;
     }
     // Cambios locales que faltan en la nube, según qué versión hay allí.
     function opsAgainst(id, s, raw, local) {
@@ -545,7 +575,7 @@
       if (jsonSize(sent) > limit) { s.lastError = 'size'; status(id, 'size'); return { ok: false, reason: 'size' }; }
       // Este envío: su marca queda apuntada (en memoria y en el journal) ANTES
       // de mandarlo, por si llega a la nube y la respuesta no vuelve.
-      const attempt = { tag: (cfg.tabId || 'tab') + '~' + (++attemptSeq), sent };
+      const attempt = { tag: (cfg.tabId || 'tab') + '~' + instanceId + '~' + (++attemptSeq), sent };
       s.attempts.push(attempt);
       if (s.attempts.length > MAX_ATTEMPTS) s.attempts.shift();
       journalPut(id, ops);
@@ -564,11 +594,11 @@
         const sendOps = prev ? localOps(id, prev.sent, sent) : ops;
         const merged = applyOps(remoteDoc, sendOps);
         if (merged.conflicts.length) throw err('conflict', { conflicts: merged.conflicts });
-        if (prev && deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev: (raw && raw._rev) || 0, tag: raw._updatedBy, wrote: false };
+        if (prev && deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev: (raw && raw._rev) || 0, writers: writersOf(raw), wrote: false };
         if (jsonSize(merged.doc) > limit) throw err('size');
         const rev = ((raw && raw._rev) || 0) + 1;
-        t.set(ref(id), Object.assign({}, merged.doc, { _rev: rev, _updatedAt: new Date(now()).toISOString(), _updatedBy: attempt.tag }));
-        return { doc: merged.doc, rev, tag: attempt.tag, wrote: true };
+        t.set(ref(id), Object.assign({}, merged.doc, syncStamp(raw, attempt.tag, rev, new Date(now()).toISOString())));
+        return { doc: merged.doc, rev, writers: syncStamp(raw, attempt.tag, rev, '')._writers, wrote: true };
       });
       try {
         result = await withTimeout(tx);
@@ -625,7 +655,7 @@
       s.known = true;
       s.base = clone(result.doc);
       s.rev = result.rev;
-      s.serverTag = result.tag || null;
+      s.serverWriters = result.writers || [];
       dropAttemptsThrough(s, attempt);
       s.lastError = null;
       journal.clear(id);
@@ -706,7 +736,7 @@
       }
       s.base = incoming;
       s.rev = (raw && raw._rev) || 0;
-      s.serverTag = (raw && raw._updatedBy) || null;
+      s.serverWriters = writersOf(raw);
       if (against.own) { dropAttemptsThrough(s, against.own); s.lastError = null; if (!ops.length && !s.attempts.length) journal.clear(id); }
       cfg.applyLocal(id, merged.doc);
       status(id, against.own && !ops.length ? 'saved' : 'remote');
@@ -727,8 +757,9 @@
         if (local === undefined) continue;
         // La pestaña cerrada envió algo que sí llegó (la nube lleva su marca):
         // solo falta lo que editó después de ese envío.
-        const tag = st(entry.id).serverTag;
-        const own = tag ? entry.own.find(o => o.tag === tag) : null;
+        const w = st(entry.id).serverWriters || [];
+        let own = null;
+        for (let i = entry.own.length - 1; i >= 0 && !own; i--) if (w.indexOf(entry.own[i].tag) >= 0) own = entry.own[i];
         const merged = applyOps(local, own ? own.ops : entry.ops);
         if (merged.conflicts.length) {
           st(entry.id).blocked = merged.conflicts;
@@ -786,7 +817,7 @@
           const rev = raw._rev || 0;
           if (deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev, conflicts: merged.conflicts, wrote: false };
           if (jsonSize(merged.doc) > limit) throw err('size');
-          t.set(ref(id), Object.assign({}, merged.doc, { _rev: rev + 1, _updatedAt: new Date(now()).toISOString(), _updatedBy: cfg.tabId || 'tab' }));
+          t.set(ref(id), Object.assign({}, merged.doc, syncStamp(raw, cfg.tabId || 'tab', rev + 1, new Date(now()).toISOString())));
           return { doc: merged.doc, rev: rev + 1, conflicts: merged.conflicts, wrote: true };
         }));
       } catch (e) {

@@ -155,6 +155,31 @@ test('coach_data no acepta un campo authUid', async function () {
   await assertFails(updateDoc(doc(db, 'clients/coach_data'), { authUid: 'uid-a' }));
 });
 
+test('cliente con varios códigos (authUids): su segunda cuenta lee, consulta y guarda solo su ficha', async function () {
+  await testEnv.withSecurityRulesDisabled(async function (ctx) {
+    await updateDoc(doc(fsdb(ctx), 'clients/client-a'), { authUids: ['uid-a', 'uid-a2'] });
+  });
+  const db = fsdb(testEnv.authenticatedContext('uid-a2'));
+  await assertSucceeds(getDoc(doc(db, 'clients/client-a')));
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { name: 'Cambio propio' }));
+  const snap = await assertSucceeds(getDocs(query(collection(db, 'clients'), where('authUids', 'array-contains', 'uid-a2'))));
+  assert.deepEqual(snap.docs.map(function (d) { return d.id; }), ['client-a']);
+  await assertFails(getDoc(doc(db, 'clients/client-b')));
+  await assertFails(getDoc(doc(db, 'clients/coach_data')));
+  // No puede añadirse ni quitarse dueños.
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { authUids: ['uid-a2'] }));
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { authUids: ['uid-a', 'uid-a2', 'uid-b'] }));
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { authUid: 'uid-a2' }));
+  // Un cliente sin authUids tampoco puede crearse esa lista.
+  const dbB = fsdb(testEnv.authenticatedContext('uid-b'));
+  await assertFails(updateDoc(doc(dbB, 'clients/client-b'), { authUids: ['uid-b', 'uid-intruso'] }));
+});
+
+test('coach_data no acepta un campo authUids', async function () {
+  const db = fsdb(testEnv.authenticatedContext('uid-coach', { role: 'coach' }));
+  await assertFails(updateDoc(doc(db, 'clients/coach_data'), { authUids: ['uid-a'] }));
+});
+
 test('ni el entrenador lee una colección distinta', async function () {
   const db = fsdb(testEnv.authenticatedContext('uid-coach', { role: 'coach' }));
   await assertFails(getDoc(doc(db, 'secretos/x')));

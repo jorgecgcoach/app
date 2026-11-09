@@ -8616,7 +8616,9 @@ async function loadClientAfterAuth(user){
   // Una sola consulta por authUid. No lee coach_data ni la lista de códigos.
   // El catálogo de vídeos (nombre + vídeo general, sin datos privados) se pide a la vez.
   const catP=loadClientCatalog();
-  const q=await window.db.collection('clients').where('authUid','==',user.uid).limit(1).get();
+  let q=await window.db.collection('clients').where('authUid','==',user.uid).limit(1).get();
+  // Clientes que tenían más de un código: cualquiera de sus cuentas está en authUids.
+  if(q.empty) q=await window.db.collection('clients').where('authUids','array-contains',user.uid).limit(1).get();
   if(q.empty){
     try{ await firebase.auth().signOut(); }catch(_){}
     const err=new Error('no-profile');
@@ -8761,7 +8763,11 @@ async function provisionClientAuth(cid, code){
   }finally{
     try{ await auth.signOut(); }catch(_){}
   }
-  if(DATA.clients[cid]) DATA.clients[cid].authUid=uid;
+  if(DATA.clients[cid]){
+    DATA.clients[cid].authUid=uid;
+    // Al asignar un código nuevo, los códigos anteriores (cuentas de la migración) dejan de valer.
+    if(Array.isArray(DATA.clients[cid].authUids)) DATA.clients[cid].authUids=[uid];
+  }
   return uid;
 }
 async function saveCodeModalWithAuth(){

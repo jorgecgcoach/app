@@ -11,7 +11,7 @@ rules_version = '2';
 // Quién puede:
 // - Entrenador (mismo criterio que firestore.rules: claim role == 'coach' o UID de la lista):
 //   todo dentro de clients/.
-// - Cliente: solo su carpeta, comprobando en Firestore que clients/{clientId}.authUid es su uid.
+// - Cliente: solo su carpeta, comprobando en Firestore que clients/{clientId}.authUid (o authUids) es su uid.
 // - Nadie más: ni anónimos ni otros clientes.
 //
 // OJO: los enlaces guardados con getDownloadURL llevan un token y NO pasan por estas reglas.
@@ -30,7 +30,8 @@ service firebase.storage {
     function ownsClient(clientId) {
       return request.auth != null
         && clientId != 'coach_data'
-        && firestore.get(/databases/(default)/documents/clients/$(clientId)).data.authUid == request.auth.uid;
+        && (firestore.get(/databases/(default)/documents/clients/$(clientId)).data.get('authUid', null) == request.auth.uid
+            || request.auth.uid in firestore.get(/databases/(default)/documents/clients/$(clientId)).data.get('authUids', []));
     }
 
     match /clients/{clientId}/photos/{file} {

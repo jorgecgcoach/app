@@ -138,7 +138,10 @@ test('3. una copia dañada se detecta (Firestore y Storage)', () => {
 test('4. DESASTRE TOTAL: se borra todo y la copia lo recupera entero (datos idénticos, archivos idénticos, mismos tokens)', async () => {
   await vaciarTodo();
   assert.equal((await db.collection('clients').get()).size, 0);
-  const inf = await restaurar(db, copia, { apply: true });
+  const sinPedir = await restaurar(db, copia, { apply: false });
+  assert.ok(sinPedir.credenciales.length > 0 && sinPedir.credenciales.every(c => /no se repone/.test(c)), 'sin pedirlo, ninguna credencial vuelve');
+  const sim = await restaurar(db, copia, { apply: false, credenciales: true });
+  const inf = await restaurar(db, copia, { apply: true, plan: sim.huella, credenciales: true });
   assert.equal(inf.documentosNuevos, 6); // coach_data, 2 fichas, contacto, catálogo y la colección extra
   const st2 = await st.restaurar(bucket, dirStorage, { apply: true });
   assert.equal(st2.repuestos.length, 2);
@@ -217,7 +220,7 @@ test('8. la «Descargar copia» de la app también se puede verificar y restaura
   assert.equal(origen, 'app');
   assert.equal(lib.verificar(c2).ok, true);
   await vaciarTodo();
-  await restaurar(db, c2, { apply: true });
+  await restaurar(db, c2, { apply: true, credenciales: true });   // proyecto vacío = desastre: se pide expresamente
   const a = (await db.doc('clients/cliA').get()).data();
   assert.deepEqual(lib.sinSync(a), lib.sinSync(fichaCompleta()));
   const meta = (await db.doc('clients/coach_data').get()).data();
@@ -271,4 +274,89 @@ test('11. si la nube cambia durante la restauración, ese documento no se toca y
   const d2 = (await ref.get()).data(); d2.blocks[0].data.log['e1|0'] = { kg: '110', reps: '5', rir: '1' }; d2._rev++; await ref.set(d2);
   await assert.rejects(() => restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ['clients/cliB', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus'] }), e => e.code === 'PLAN_DISTINTO');
   assert.deepEqual((await ref.get()).data().blocks[0].data.log['e1|0'], { kg: '110', reps: '5', rir: '1' });
+});
+
+/* ---- Segunda revisión antes de fusionar el PR #10 ---- */
+const crypto = require('crypto');
+
+test('12. el plan aprobado va ligado al CONTENIDO: otra copia con los mismos huecos pero otros valores no se aplica', async () => {
+  await db.doc('clients/cliB').set({ name: 'Cliente Ficticio B', blocks: [], _rev: 30 });
+  const ref = db.doc('clients/cliA');
+  const d = (await ref.get()).data(); delete d.blocks[0].data.log['e1|1']; d._rev++; await ref.set(d);
+  const ex = ['clients/cliB', 'clients/cliA|blocks[id:b2]', 'clients/cliA|menus', 'clients/cliA|blocks[id:b1].data.log.e1|0', 'clients/coach_data', 'contacts', 'catalog', 'otra_coleccion'];
+  const sim = await restaurar(db, copia, { apply: false, excluir: ex });
+  assert.deepEqual(sim.cambios.map(c => c.split('  (')[0]), ['clients/cliA|blocks[id:b1].data.log.e1|1']);
+  const otra = JSON.parse(JSON.stringify(copia));
+  otra.colecciones.clients.cliA.blocks[0].data.log['e1|1'] = { kg: '999', reps: '1', rir: '0', done: true };
+  otra.huellas = lib.construirCopia(otra.colecciones).huellas;   // una copia válida en sí misma
+  const simOtra = await restaurar(db, otra, { apply: false, excluir: ex });
+  assert.deepEqual(simOtra.cambios, sim.cambios, 'mismas rutas');
+  assert.notEqual(simOtra.huella, sim.huella, 'pero otro plan');
+  const antes = (await ref.get()).data();
+  await assert.rejects(() => restaurar(db, otra, { apply: true, plan: sim.huella, excluir: ex }), e => e.code === 'PLAN_DISTINTO');
+  assert.deepEqual((await ref.get()).data(), antes, 'no se ha escrito nada');
+  await restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ex });
+  assert.deepEqual((await ref.get()).data().blocks[0].data.log['e1|1'], copia.colecciones.clients.cliA.blocks[0].data.log['e1|1']);
+});
+
+test('13. Storage: el plan aprobado va ligado al contenido y al token de cada archivo, no solo a su ruta', async () => {
+  await bucket.file(FOTO).delete({ ignoreNotFound: true });
+  const sim = await st.restaurar(bucket, dirStorage, { apply: false });
+  assert.deepEqual(sim.repuestos, [FOTO]);
+  for (const cambio of ['contenido', 'token']) {
+    const otra = fs.mkdtempSync(path.join(os.tmpdir(), 'jcg-copia-storage-otra-'));
+    try {
+      fs.cpSync(dirStorage, otra, { recursive: true });
+      const man = JSON.parse(fs.readFileSync(path.join(otra, st.MANIFIESTO), 'utf8'));
+      const a = man.archivos.find(x => x.ruta === FOTO);
+      if (cambio === 'contenido') {
+        const buf = Buffer.from('otra foto distinta, misma ruta');
+        fs.writeFileSync(path.join(otra, ...FOTO.split('/')), buf);
+        a.sha256 = crypto.createHash('sha256').update(buf).digest('hex'); a.bytes = buf.length;
+      } else a.token = '99999999-8888-4777-8666-555555555555';
+      fs.writeFileSync(path.join(otra, st.MANIFIESTO), JSON.stringify(man));
+      assert.ok(st.verificar(otra).ok, 'la otra copia es íntegra en sí misma');
+      const simOtra = await st.restaurar(bucket, otra, { apply: false });
+      assert.deepEqual(simOtra.repuestos, sim.repuestos, 'mismas rutas (' + cambio + ')');
+      await assert.rejects(() => st.restaurar(bucket, otra, { apply: true, plan: sim.huella }), e => e.code === 'PLAN_DISTINTO');
+      const [existe] = await bucket.file(FOTO).exists();
+      assert.equal(existe, false, 'no se ha subido nada (' + cambio + ')');
+    } finally { fs.rmSync(otra, { recursive: true, force: true }); }
+  }
+  await st.restaurar(bucket, dirStorage, { apply: true, plan: sim.huella });
+  const [md] = await bucket.file(FOTO).getMetadata();
+  assert.equal(md.metadata.firebaseStorageDownloadTokens, TOKEN_FOTO);
+});
+
+test('14. recrear una ficha borrada NO revive su código, sus cuentas ni su push; con --con-credenciales sí, salvo lo que ya usa otra', async () => {
+  const ex = ['clients/cliB', 'clients/coach_data', 'contacts', 'catalog', 'otra_coleccion'];
+  await db.doc('clients/cliA').delete();
+  const sim = await restaurar(db, copia, { apply: false, excluir: ex });
+  assert.deepEqual(sim.credenciales.map(c => c.split('  (')[0]).sort(), ['clients/cliA|authUid', 'clients/cliA|authUids', 'clients/cliA|code', 'clients/cliA|push']);
+  await restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ex });
+  const a = (await db.doc('clients/cliA').get()).data();
+  for (const k of ['code', 'authUid', 'authUids', 'push']) assert.equal(a[k], undefined, k + ' no vuelve');
+  assert.equal(a.blocks.length, 2, 'el resto de la ficha sí');
+  // Recuperación de un desastre, pidiéndolo, pero su código ya se ha dado a otro cliente.
+  await db.doc('clients/cliA').delete();
+  await db.doc('clients/cliB').set({ name: 'Cliente Ficticio B', code: 'FICT-A', blocks: [], _rev: 40 });
+  const sim2 = await restaurar(db, copia, { apply: false, excluir: ex, credenciales: true });
+  assert.ok(sim2.credenciales.some(c => /^clients\/cliA\|code .*ya la usa otra ficha/.test(c)));
+  await restaurar(db, copia, { apply: true, plan: sim2.huella, excluir: ex, credenciales: true });
+  const b = (await db.doc('clients/cliA').get()).data();
+  assert.equal(b.code, undefined, 'el código ya es de otro cliente: no se repite');
+  assert.equal(b.authUid, 'uid-a');
+  assert.deepEqual(b.authUids, ['uid-a', 'uid-a2']);
+});
+
+test('15. el documento del entrenador recreado no revive su PIN ni la lista de códigos sin pedirlo', async () => {
+  await db.doc('clients/coach_data').delete();
+  const ex = ['clients/cliA', 'clients/cliB', 'contacts', 'catalog', 'otra_coleccion'];
+  const sim = await restaurar(db, copia, { apply: false, excluir: ex });
+  await restaurar(db, copia, { apply: true, plan: sim.huella, excluir: ex });
+  const m = (await db.doc('clients/coach_data').get()).data();
+  assert.equal(m.coachCode, undefined);
+  assert.equal(m.codes, undefined);
+  assert.equal(m.negocio.coachPush, undefined, 'tampoco el push del entrenador');
+  assert.equal(m.exLibrary.length, 1, 'biblioteca, plantillas y negocio sí');
 });

@@ -1653,7 +1653,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
 <script src="shared/safe-save.js?v=20261109-instantaneas"></script>
-<script src="shared/copia-aditiva.js?v=20261110-copias"></script>
+<script src="shared/copia-aditiva.js?v=20261110-copias2"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -3556,7 +3556,9 @@ async function importBackupFile(file){
   }
   const docs=pc.plan.docs.concat(pm.plan.docs);
   if(!docs.length){toast('Todo lo de la copia ya está en la nube: no hay nada que añadir');return;}
-  _restorePlan={dump,copiaClientes,copiaMeta,nube};
+  // Se guarda lo aprobable: la nube leída para el simulacro y los planes con la firma (ruta + contenido)
+  // de cada cambio. Al pulsar «Restaurar lo marcado» se compara con una lectura NUEVA del servidor.
+  _restorePlan={dump,copiaClientes,copiaMeta,nube,planClientes:pc.plan,planMeta:pm.plan};
   openRestorePlan(docs);
 }
 function restoreDocName(id){
@@ -3573,6 +3575,7 @@ function openRestorePlan(docs){
     +escapeHtml(restoreDocName(doc.id))+'</label> <span style="opacity:.7;font-weight:400">· '+(doc.nuevo?'ya no existe: se recrearía entera':(doc.cambios.length+' cosa(s) que faltan'))+'</span></summary>'
     +doc.cambios.map(c=>'<label style="display:block;font-size:.78rem;margin:3px 0 3px 18px;word-break:break-all"><input type="checkbox" checked data-cid="'+escapeHtml(c.id)+'" data-of="'+i+'"> '
       +escapeHtml(c.ruta)+' <span style="opacity:.6">('+(c.tipo==='documento-nuevo'?'ficha entera':c.tipo==='elemento'?'elemento de una lista':'dato')+')</span></label>').join('')
+    +restoreCredNote(doc)
     +'</details>').join('');
   d.innerHTML='<div class="modal" style="max-width:560px;max-height:86vh;overflow:auto"><h3 style="margin:0 0 6px">🛟 Simulacro de restauración</h3>'
     +'<p style="font-size:.85rem;margin:0 0 10px">Esto es lo que <b>falta</b> en la nube y está en la copia ('+total+'). Solo se añade: no se borra ni se cambia nada de lo actual, y los códigos y el PIN no se tocan.</p>'
@@ -3581,6 +3584,14 @@ function openRestorePlan(docs){
     +'<button class="primary" style="width:100%;margin:10px 0 8px" onclick="applyRestorePlan()">Restaurar lo marcado</button>'
     +'<button style="width:100%;background:#eee;border:none;padding:10px;border-radius:10px;cursor:pointer" onclick="closeRestorePlan()">Cancelar (no se restaura nada)</button></div>';
   document.body.appendChild(d);
+}
+// Ficha que se recrea: qué credenciales y vinculaciones NO vuelven (nunca se reponen desde la app).
+function restoreCredNote(doc){
+  const fuera=(doc.credenciales||[]).filter(c=>!c.repuesta).map(c=>c.campo.split('.').pop());
+  if(!fuera.length)return '';
+  const nombre={code:'código',codes:'códigos',authUid:'cuenta de acceso',authUids:'cuentas de acceso',push:'avisos push',coachPush:'avisos push',coachCode:'PIN'};
+  const txt=[...new Set(fuera.map(k=>nombre[k]||k))].join(', ');
+  return '<p style="font-size:.78rem;margin:4px 0 2px 18px;color:#b3261e">Se recrearía <b>sin</b>: '+escapeHtml(txt)+'. Si vuelve a entrenar, dale un código nuevo.</p>';
 }
 function restorePlanDoc(cb){document.querySelectorAll('#restorePlanScrim input[data-of="'+cb.dataset.doc+'"]').forEach(x=>{x.checked=cb.checked;});}
 function closeRestorePlan(){const m=document.getElementById('restorePlanScrim');if(m)m.remove();}
@@ -3591,13 +3602,34 @@ async function applyRestorePlan(){
   document.querySelectorAll('#restorePlanScrim input[data-cid]').forEach(x=>{(x.checked?marcados:excluir).push(x.dataset.cid);});
   closeRestorePlan();_restorePlan=null;
   if(!marcados.length){toast('No se ha marcado nada: no se ha restaurado nada');return;}
-  // Se recalcula con lo que hay AHORA y solo se sigue si sale exactamente lo marcado.
-  const pc=CA.planificar('clients',DATA.clients,P.copiaClientes,excluir);
+  const NL='\n';
+  const parar=m=>alert(m+NL+NL+'No se ha restaurado nada. Vuelve a empezar la restauración.');
+  if((typeof hasUnsavedWork==='function'&&hasUnsavedWork())||(sync.hasUnsaved&&sync.hasUnsaved())){parar('Hay cambios sin guardar en esta pantalla.');return;}
+  // Se vuelve a leer el SERVIDOR ahora: no se fía de lo que ha llegado por tiempo real (puede ir con retraso).
+  const nubeAhora={},base={};
+  try{
+    for(const id of Object.keys(P.copiaClientes).concat(COACH_DOC)){
+      const snap=await window.db.collection('clients').doc(id).get({source:'server'});
+      nubeAhora[id]=snap.exists?snap.data():null;
+      base[id]=sync.baseOf(id);
+    }
+  }catch(e){console.warn('restaurar: releer nube',e);parar('No se ha podido volver a leer la nube (¿sin conexión?).');return;}
+  // Solo se sigue si la nube no ha cambiado desde el simulacro y el plan es EXACTAMENTE el aprobado
+  // (mismas rutas y mismo contenido).
+  const pickMeta=d=>d?{exLibrary:d.exLibrary,templates:d.templates,negocio:d.negocio}:null;
   const metaLocal={exLibrary:DATA.exLibrary||[],templates:DATA.templates||{workouts:[],diets:[]},negocio:DATA.negocio||{}};
-  const pm=CA.planificar('clients',{[COACH_DOC]:metaLocal},Object.keys(P.copiaMeta).length?{[COACH_DOC]:P.copiaMeta}:{},excluir);
-  if(CA.huellaPlan(pc.ids.concat(pm.ids))!==CA.huellaPlan(marcados)){
-    alert('Algo ha cambiado mientras revisabas la lista. No se ha restaurado nada: vuelve a empezar.');return;
+  const cc=CA.comprobarAntesDeAplicar({col:'clients',nubeRevisada:P.nube,nubeAhora,base,locales:DATA.clients,copia:P.copiaClientes,excluir,
+    huellaAprobada:CA.huellaAprobada(P.planClientes,marcados)});
+  const cm=CA.comprobarAntesDeAplicar({col:'clients',nubeRevisada:{[COACH_DOC]:pickMeta(P.nube[COACH_DOC])},nubeAhora:{[COACH_DOC]:pickMeta(nubeAhora[COACH_DOC])},
+    base:{[COACH_DOC]:pickMeta(base[COACH_DOC])},locales:{[COACH_DOC]:metaLocal},copia:Object.keys(P.copiaMeta).length?{[COACH_DOC]:P.copiaMeta}:{},excluir,
+    huellaAprobada:CA.huellaAprobada(P.planMeta,marcados)});
+  if(!cc.ok||!cm.ok){
+    const mal=!cc.ok?cc:cm;
+    if(mal.motivo==='cambio-nube')parar('La nube ha cambiado desde el simulacro ('+((cc.docs||[]).length+(cm.docs||[]).length)+' ficha(s)), quizá desde otro dispositivo, y esta pantalla aún no lo tiene. Recarga la app antes de repetirla.');
+    else parar('Lo que se iba a restaurar ya no es exactamente lo que revisaste.');
+    return;
   }
+  const pc=cc.plan, pm=cm.plan;
   for(const doc of pc.docs)DATA.clients[doc.id]=doc.valor;
   if(pm.docs.length){const v=pm.docs[0].valor;DATA.exLibrary=v.exLibrary;DATA.templates=v.templates;DATA.negocio=normNegocio(v.negocio);}
   try{ensureData();}catch(e){console.warn('ensureData import',e);}

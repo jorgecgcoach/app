@@ -3,7 +3,8 @@
 
    1) SIMULACRO (por defecto): lista CADA cosa que se añadiría, con su identificador
         coleccion/documento|ruta      p. ej.  clients/ID|blocks[id:b3]   clients/ID|menus
-      y una HUELLA del plan. No escribe nada.
+      y una HUELLA del plan, calculada con la ruta Y el contenido de cada cambio (otra copia con los
+      mismos huecos pero otros valores da otra huella). No escribe nada.
    2) Revisa la lista. Lo que se borró A PROPÓSITO después de la copia se excluye con --excluir
       (documento entero «clients/ID», o una parte «clients/ID|blocks[id:b3]»; se puede repetir, o poner
       una por línea en un archivo con --excluir-archivo).
@@ -11,10 +12,13 @@
       (mismas exclusiones y la nube sin cambios en lo que afecta). Si no coincide, no escribe nada.
       Además, en cada documento se vuelve a calcular dentro de la transacción: si la nube cambió entre
       medias, ese documento NO se toca y se informa.
+   Fichas que ya no existen: se recrean SIN sus credenciales ni vinculaciones (código, códigos, cuentas,
+   push; PIN y lista de códigos del entrenador). Solo para recuperar un desastre: --con-credenciales, y
+   aun así no se repone un código o una cuenta que ya use otra ficha.
    Para el proyecto real hace falta además ALLOW_RESTORE_APPLY=yes.
 
      node scripts/restaurar-copia.js copia.json [--solo clients/ID] [--excluir X]... [--excluir-archivo f.txt]
-                                     [--apply --plan HUELLA] [--proyecto-real]
+                                     [--con-credenciales] [--apply --plan HUELLA] [--proyecto-real]
    Nunca imprime valores: solo identificadores y rutas. */
 const fs = require('fs');
 const lib = require('./copia-lib');
@@ -44,20 +48,25 @@ async function planificar(db, copia, opciones) {
       docsCopia[id] = copia.colecciones[col][id];
     });
     const actuales = await leerActuales(db, col, Object.keys(docsCopia));
-    planes.push(aditiva.planificar(col, actuales, docsCopia, opciones.excluir));
+    // Para no repetir un código o una cuenta que ya tenga otra ficha, con --con-credenciales se mira toda la colección.
+    let todos = null;
+    if (opciones.credenciales) { todos = {}; (await db.collection(col).get()).forEach(function (d) { todos[d.id] = d.data(); }); }
+    planes.push(aditiva.planificar(col, actuales, docsCopia, opciones.excluir, { credenciales: !!opciones.credenciales, todos: todos }));
   }
   const ids = [].concat.apply([], planes.map(function (p) { return p.ids; }));
-  return { planes, ids, huella: aditiva.huellaPlan(ids) };
+  const firmas = [].concat.apply([], planes.map(function (p) { return p.firmas; }));
+  return { planes, ids, firmas, huella: aditiva.huellaPlan(firmas) };
 }
 
 async function restaurar(db, copia, opciones) {
   opciones = opciones || {};
   const plan = await planificar(db, copia, opciones);
-  const informe = { huella: plan.huella, documentosNuevos: 0, documentosConAñadidos: 0, sinCambios: 0, cambios: [], noAplicados: [], aplicado: false };
+  const informe = { huella: plan.huella, documentosNuevos: 0, documentosConAñadidos: 0, sinCambios: 0, cambios: [], credenciales: [], noAplicados: [], aplicado: false };
   plan.planes.forEach(function (p) {
     p.docs.forEach(function (d) {
       if (d.nuevo) informe.documentosNuevos++; else informe.documentosConAñadidos++;
       d.cambios.forEach(function (c) { informe.cambios.push(c.id + '  (' + c.tipo + ')'); });
+      (d.credenciales || []).forEach(function (c) { informe.credenciales.push(p.col + '/' + d.id + '|' + c.campo + '  (' + (c.repuesta ? 'SE REPONE' : c.motivo === 'en-uso' ? 'no: ya la usa otra ficha' : 'no se repone') + ')'); });
     });
   });
   if (!opciones.apply) return informe;
@@ -69,13 +78,21 @@ async function restaurar(db, copia, opciones) {
   for (const p of plan.planes) {
     for (const d of p.docs) {
       const ref = db.collection(p.col).doc(d.id);
-      const esperado = d.cambios.map(function (c) { return c.id; }).sort().join('\n');
+      // Se compara ruta Y contenido de cada cambio (las firmas), no solo las rutas.
+      const esperado = d.cambios.map(function (c) { return c.firma; }).sort().join('\n');
       const r = await db.runTransaction(async function (t) {
         const snap = await t.get(ref);
         const actual = snap.exists ? snap.data() : undefined;
+        // Ficha que se recrea: solo si sigue sin existir, y con el valor exacto del plan revisado
+        // (incluida la decisión sobre credenciales).
+        if (d.nuevo) {
+          if (actual !== undefined) return { ok: false };
+          t.set(ref, Object.assign({}, d.valor, p.col === 'clients' ? lib.selloRestauracion(undefined) : {}));
+          return { ok: true };
+        }
         const rehecho = aditiva.planificar(p.col, { [d.id]: actual }, { [d.id]: copia.colecciones[p.col][d.id] }, opciones.excluir);
         const doc = rehecho.docs[0];
-        const ahora = doc ? doc.cambios.map(function (c) { return c.id; }).sort().join('\n') : '';
+        const ahora = doc ? doc.cambios.map(function (c) { return c.firma; }).sort().join('\n') : '';
         if (ahora !== esperado) return { ok: false };                       // la nube cambió: no se toca
         const extra = p.col === 'clients' ? lib.selloRestauracion(actual) : {};
         t.set(ref, Object.assign({}, doc.valor, extra));
@@ -107,12 +124,17 @@ async function main() {
   }
   const { copia } = cargar(ruta);
   const excluir = leerExclusiones();
-  const inf = await restaurar(admin.firestore(), copia, { apply, plan: planRevisado || undefined, solo: arg('--solo'), excluir });
+  const credenciales = process.argv.includes('--con-credenciales');
+  const inf = await restaurar(admin.firestore(), copia, { apply, plan: planRevisado || undefined, solo: arg('--solo'), excluir, credenciales });
   console.log((apply ? 'APLICADO' : 'SIMULACRO (no se ha escrito nada)') + ' en ' + modo + '. Exclusiones: ' + excluir.length + '.');
   console.log('Documentos que se recrean: ' + inf.documentosNuevos + '. Con datos que se añaden: ' + inf.documentosConAñadidos + '.');
   console.log('Cambios (' + inf.cambios.length + '). Revisa y excluye lo que se borró a propósito:');
   inf.cambios.forEach(function (c) { console.log('  + ' + c); });
-  console.log('HUELLA DEL PLAN: ' + inf.huella + (apply ? '' : '   → para aplicar: --apply --plan ' + inf.huella + ' (con las mismas --excluir)'));
+  if (inf.credenciales.length) {
+    console.log('Credenciales de fichas que se recrean (' + (credenciales ? 'con --con-credenciales' : 'sin --con-credenciales: ninguna se repone') + '):');
+    inf.credenciales.forEach(function (c) { console.log('  · ' + c); });
+  }
+  console.log('HUELLA DEL PLAN: ' + inf.huella + (apply ? '' : '   → para aplicar: --apply --plan ' + inf.huella + ' (con las mismas --excluir' + (credenciales ? ' y --con-credenciales' : '') + ')'));
   if (inf.noAplicados.length) {
     console.log('⚠ NO aplicados porque la nube cambió durante la restauración (no se han tocado): ' + inf.noAplicados.length);
     inf.noAplicados.forEach(function (d) { console.log('  ! ' + d); });

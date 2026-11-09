@@ -26,7 +26,8 @@ const AUTH = process.env.E2E_AUTH === '1';
 const BLOCKED_LAN = /^\/(docs|scripts|e2e|firestore|functions|node_modules)\/|\/\./;
 
 function buildHtml() {
-  let html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  // Con autocrlf la copia de trabajo puede venir en CRLF: se normaliza para que los reemplazos encajen.
+  let html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const cfgRe = /const firebaseConfig = \{[\s\S]*?\n\};/;
   if (!cfgRe.test(html)) throw new Error('No encuentro firebaseConfig');
   html = html.replace(cfgRe, `const firebaseConfig = {

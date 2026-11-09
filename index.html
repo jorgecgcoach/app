@@ -2701,26 +2701,31 @@ async function loadDataFirestoreReal(gen){
   }catch(e){ e._stage='fetch'; throw e; }
   try{ ensureData(); }
   catch(e){ e._stage='prepare'; throw e; }
-  if(role==='coach'){ try{ await migrateSplitIfNeeded(); }catch(e){ console.warn('Migración:',e); } }
+  if(role==='coach'){ try{ await migrateSplitIfNeeded(gen); }catch(e){ console.warn('Migración:',e); } }
+  loadStillCurrent(gen);
   if(CONTACTS_COLLECTION&&role==='coach'){ try{ await mergeContactsFromCollection(); }catch(e){ console.warn('contacts',e); } }
+  loadStillCurrent(gen); // abandonada mientras esperaba: no arranca tiempo real ni recuperación
   afterDataLoaded();
   return DATA;
 }
 // Da a cada cliente su propio documento. Va por el guardado seguro: si el
 // documento ya existe con datos distintos, es conflicto y no se toca.
 // Cuando todos lo tienen, quita los clientes de clients/coach_data.
-async function migrateSplitIfNeeded(){
+async function migrateSplitIfNeeded(gen){
   const sync=getSync();
   if(!sync)return;
+  const vigente=()=>gen===undefined||gen===_loadGen; // carga abandonada: no escribe nada más
   const existing=window._existingClientDocs||new Set();
   let allOk=true;
   for(const cid of Object.keys(DATA.clients)){
     if(existing.has(cid))continue; // ya tiene doc (o lo creó el propio cliente): no tocar
+    if(!vigente())return;
     const r=await sync.save(cid);
     if(r&&r.ok)existing.add(cid);
     else{ allOk=false; console.warn('No se pudo migrar el cliente',cid,r&&r.reason); }
   }
   if(allOk&&!window._splitDone){
+    if(!vigente())return;
     window._splitDone=true;
     const r=await sync.save(COACH_DOC);
     if(r&&r.ok)window._metaClients=null;
@@ -8605,6 +8610,7 @@ async function submitCoachWithAuth(btn){
   }
 }
 function logoutWithAuth(){
+  _loadGen++; // cualquier carga aún en marcha queda abandonada
   stopRealtime();
   SESSION=null; Store.set('jcg_session', null); UI.dietEdit=false;
   const p=(firebase.auth&&firebase.apps&&firebase.apps.length)?firebase.auth().signOut():Promise.resolve();
@@ -8709,6 +8715,7 @@ function closeCoachCodeModal(){$("#ccodeScrim").classList.remove("open")}
 function saveCoachCode(){const cur=$("#ccCur").value.trim();if(cur!==(DATA.coachCode||"0811")){toast("Código actual incorrecto");return}const nw=$("#ccNew").value.trim();if(/^\d{4}$/.test(nw)){DATA.coachCode=nw;save();closeCoachCodeModal();toast("Código actualizado")}else{toast("El nuevo código debe tener 4 dígitos")}}
 function logout(){
  if(AUTH_ENABLED){ logoutWithAuth(); return; }
+ _loadGen++; // cualquier carga aún en marcha queda abandonada: no toca DATA ni la base
  stopRealtime();
  SESSION=null;Store.set("jcg_session",null);UI.dietEdit=false;renderGate()}
 /* ---------- módulos por cliente ---------- */

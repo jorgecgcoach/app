@@ -310,6 +310,7 @@ textarea:focus{border-color:var(--teal)}
 /* toast */
 .toast{position:fixed;left:50%;bottom:84px;transform:translate(-50%,30px);background:var(--navy);color:#fff;padding:12px 20px;border-radius:var(--r-pill);font-weight:800;font-size:.86rem;z-index:90;opacity:0;pointer-events:none;transition:.3s;box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.bad{background:#b3261e}
 .fade{animation:fade .3s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 /* accordion reveal (only on the item just opened) */
@@ -4640,7 +4641,11 @@ function renderLibraryBody(){
   h+='<button onclick="importDietTemplateFromJSON()" style="'+dash+'">➕ Nueva dieta desde JSON (ChatGPT)</button>';
   el.innerHTML=h;
 }
-function toast(m){const t=$("#toast");t.innerHTML="✓ "+m;t.classList.add("show");clearTimeout(t._);t._=setTimeout(()=>t.classList.remove("show"),1900)}
+/* Aviso breve. Los errores y advertencias salen en rojo con «⚠», no con «✓».
+   kind: 'bad' u 'ok' para forzarlo; si no se indica, se deduce del texto.
+   Se pinta como TEXTO (no HTML): un nombre con etiquetas no se ejecuta. */
+const TOAST_BAD_RE=/^(error|no se |no he |no hay ninguna|no hay códigos|no encuentro|no reconozco|código no|demasiados|ese archivo no|eso no|esta cuenta|este (cliente|navegador|ejercicio|menú) no|tu navegador no|el código quedó|el nombre no coincide|el cliente de ejemplo no|el json no|falta|permiso no|plantilla no|json no|sin conexión|selecciona primero|crea primero|pega primero|abre un cliente|te falta|notificaciones aún no|no tienes|no hay una ficha|no se pudo)/i;
+function toast(m,kind){const t=$("#toast");const txt=String(m==null?"":m);const bad=kind==='bad'||(kind!=='ok'&&TOAST_BAD_RE.test(txt.trim()));t.textContent=(bad?"⚠ ":"✓ ")+txt;t.classList.toggle("bad",bad);t.classList.add("show");clearTimeout(t._);t._=setTimeout(()=>t.classList.remove("show"),bad?3200:1900)}
 
 /* ---------- sidebar ---------- */
 function clSideHTML(cid,c){
@@ -8694,7 +8699,7 @@ async function loginClientWithAuth(btn){
     try{ if(firebase.auth) await firebase.auth().signOut(); }catch(_){}
     setBtnLoading(btn,false);
     const too=e&&(e.code==='auth/too-many-requests');
-    toast((e&&e.userMessage)||(too?'Demasiados intentos. Espera un minuto y prueba otra vez.':'Código no válido. Revisa que esté bien escrito.'));
+    toast((e&&e.userMessage)||(too?'Demasiados intentos. Espera un minuto y prueba otra vez.':'Código no válido. Revisa que esté bien escrito.'),'bad');
   }
 }
 async function submitCoachWithAuth(btn){
@@ -8725,7 +8730,7 @@ async function submitCoachWithAuth(btn){
     console.warn('[auth] entrenador', (e&&e.code)||'error');
     SESSION=null; Store.set('jcg_session', null);
     setBtnLoading(btn,false);
-    toast((e&&e.userMessage)||'No se ha podido entrar con Google.');
+    toast((e&&e.userMessage)||'No se ha podido entrar con Google.','bad');
   }
 }
 function logoutWithAuth(){

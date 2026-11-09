@@ -1,0 +1,40 @@
+rules_version = '2';
+// Reglas de TRANSICIÓN (C1). NO DESPLEGAR sin autorización.
+// Solo para las horas entre publicar la web con AUTH_ENABLED = true y desplegar firestore.rules.
+// - clients/*: IGUAL que hoy en producción (abierto). No cierra nada todavía, así ninguna versión
+//   antigua de la web abierta en un móvil se queda sin poder guardar.
+// - catalog/exercises: lo nuevo. Sin esto la web con Auth no puede escribir ni leer el catálogo
+//   y los clientes no verían los vídeos de la biblioteca propia (H1).
+// - Todo lo demás: cerrado, como hoy.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isCoach() {
+      return signedIn() && (
+        request.auth.token.get('role', '') == 'coach'
+        || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
+      );
+    }
+
+    match /clients/{clientId} {
+      allow read, write: if true;
+    }
+
+    match /catalog/{docId} {
+      allow get: if signedIn() && docId == 'exercises';
+      allow create, update: if isCoach() && docId == 'exercises'
+        && request.resource.data.keys().hasOnly(['items', 'count', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 3000;
+      allow delete: if isCoach();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

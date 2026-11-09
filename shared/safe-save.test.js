@@ -1546,3 +1546,133 @@ test('FC18 _writers no crece sin límite', async () => {
   assert.equal(srv.get('cli1')._writers.length, 12);
   assert.equal(new Set(srv.get('cli1')._writers).size, 12);
 });
+
+/* ======================================================================
+   Instantáneas del tiempo real que llegan TARDE (más viejas que lo ya
+   guardado). Con conexión lenta, el aviso de un guardado anterior llega
+   después de que este dispositivo haya guardado otra vez. No puede hacer
+   retroceder la base ni la pantalla, ni provocar conflictos falsos.
+   ====================================================================== */
+// Tiempo real "lento": las instantáneas se guardan y se entregan cuando decide la prueba.
+function tiempoRealLento(srv, dev) {
+  const cola = [];
+  srv.onChange((id, d) => cola.push([id, d === null ? null : clone(d)]));
+  return {
+    cola,
+    entregar(i) { const [id, d] = cola.splice(i, 1)[0]; dev.sync.remote(id, d, { fromCache: false, hasPendingWrites: false }); },
+    entregarTodo() { while (cola.length) this.entregar(0); }
+  };
+}
+const SERIE = (kg, reps, rir) => { const o = {}; if (kg !== undefined) o.kg = kg; if (reps !== undefined) o.reps = reps; if (rir !== undefined) o.rir = rir; return o; };
+
+test('IV1 (fallo publicado) dos series con autoguardado; el aviso del primer guardado llega tarde: sin conflicto ni retroceso', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A'); a.load('cli1');
+  const rt = tiempoRealLento(srv, a);
+  const L = () => blk(a.local.cli1).log;
+  // Serie 1: peso, reps, RIR (cada campo se autoguarda)
+  L()['ex2|0'] = SERIE('165'); assert.ok((await a.sync.save('cli1')).ok);
+  L()['ex2|0'].reps = '6'; assert.ok((await a.sync.save('cli1')).ok);
+  L()['ex2|0'].rir = '1'; assert.ok((await a.sync.save('cli1')).ok);
+  // Llega tarde el aviso del PRIMER guardado (solo el peso)
+  rt.entregar(0);
+  assert.deepEqual(L()['ex2|0'], SERIE('165', '6', '1'), 'la pantalla no puede retroceder');
+  // Serie 2
+  L()['ex2|1'] = SERIE('165');
+  let r = await a.sync.save('cli1'); assert.ok(r.ok, JSON.stringify(r));
+  L()['ex2|1'].reps = '6';
+  r = await a.sync.save('cli1'); assert.ok(r.ok, JSON.stringify(r));
+  rt.entregarTodo();                                   // el resto de avisos, en orden pero tarde
+  L()['ex2|0'].rir = '2';                              // corrige el RIR de la serie 1
+  L()['ex2|1'].rir = '1';
+  r = await a.sync.save('cli1'); assert.ok(r.ok, JSON.stringify(r));
+  const nube = blk(srv.get('cli1')).log;
+  assert.deepEqual(nube['ex2|0'], SERIE('165', '6', '2'));
+  assert.deepEqual(nube['ex2|1'], SERIE('165', '6', '1'));
+  assert.deepEqual(nube['ex1|0'], { kg: 60, reps: 8 });
+  assert.equal(conflictos(a).length, 0);
+});
+
+test('IV2 (fallo publicado) el aviso viejo llega MIENTRAS otro guardado está en marcha', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A'); a.load('cli1');
+  const rt = tiempoRealLento(srv, a);
+  const L = () => blk(a.local.cli1).log;
+  L()['ex2|0'] = SERIE('100'); assert.ok((await a.sync.save('cli1')).ok);
+  L()['ex2|1'] = SERIE('100');
+  // Entra el aviso viejo justo antes de confirmar el segundo guardado
+  srv.beforeCommit = () => rt.entregar(0);
+  assert.ok((await a.sync.save('cli1')).ok);
+  await tick();
+  assert.deepEqual(L()['ex2|1'], SERIE('100'), 'la serie nueva sigue en pantalla');
+  L()['ex2|1'].reps = '5';
+  const r = await a.sync.save('cli1');
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepEqual(blk(srv.get('cli1')).log['ex2|1'], SERIE('100', '5'));
+  assert.equal(conflictos(a).length, 0);
+});
+
+test('IV3 (fallo publicado) primera instantánea del tiempo real al abrir llega después del primer guardado', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A'); a.load('cli1');
+  const inicial = clone(srv.get('cli1'));             // lo que vería el listener al arrancar
+  blk(a.local.cli1).log['ex2|0'] = SERIE('80', '10', '2');
+  assert.ok((await a.sync.save('cli1')).ok);
+  a.sync.remote('cli1', inicial, { fromCache: false, hasPendingWrites: false });   // llega tarde
+  assert.deepEqual(blk(a.local.cli1).log['ex2|0'], SERIE('80', '10', '2'));
+  blk(a.local.cli1).log['ex2|0'].rir = '3';
+  const r = await a.sync.save('cli1');
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal(conflictos(a).length, 0);
+});
+
+test('IV4 un cambio REAL de otro dispositivo (revisión más nueva) se sigue aplicando y, si choca, es conflicto', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteFicticio());
+  const a = device(srv, 'A'); const b = device(srv, 'B');
+  a.load('cli1'); b.load('cli1');
+  const rt = tiempoRealLento(srv, a);
+  blk(a.local.cli1).log['ex2|0'] = SERIE('100'); assert.ok((await a.sync.save('cli1')).ok);
+  // B (entrenador) cambia la pauta y, por su cuenta, el RIR de esa serie
+  b.load('cli1');
+  blk(b.local.cli1).program.weeks[0].days[0].exs[0].sets = 5;
+  blk(b.local.cli1).log['ex2|0'].rir = '4';
+  assert.ok((await b.sync.save('cli1')).ok);
+  rt.entregarTodo();                                   // A recibe su eco viejo y luego lo de B
+  assert.equal(blk(a.local.cli1).program.weeks[0].days[0].exs[0].sets, 5);
+  assert.equal(blk(a.local.cli1).log['ex2|0'].rir, '4');
+  // Conflicto real: A (sin ver lo de B) cambia lo mismo
+  const c = device(srv, 'C'); c.load('cli1');
+  blk(c.local.cli1).log['ex2|0'].rir = '0';
+  blk(a.local.cli1).log['ex2|0'].rir = '2';
+  assert.ok((await a.sync.save('cli1')).ok);
+  assert.equal((await c.sync.save('cli1')).reason, 'conflict');
+  assert.equal(blk(srv.get('cli1')).log['ex2|0'].rir, '2');
+});
+
+test('IV5 con cortes de conexión, cierre y reapertura, y avisos desordenados: no se pierde ninguna serie ni nota', async () => {
+  const srv = fakeServer(); srv.put('cli1', clienteFicticio());
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const a = device(srv, 'A', { storage, clock }); a.load('cli1'); a.sync.heartbeat();
+  const rt = tiempoRealLento(srv, a);
+  const L = () => blk(a.local.cli1).log;
+  for (let s = 0; s < 3; s++) {
+    L()['ex2|' + s] = SERIE(String(100 + s)); await a.sync.save('cli1');
+    if (s === 1) srv.loseReply = true;
+    L()['ex2|' + s].reps = String(5 + s); await a.sync.save('cli1');
+    if (rt.cola.length > 1) rt.entregar(0);           // avisos con retraso
+    L()['ex2|' + s].rir = String(s); await a.sync.save('cli1');
+  }
+  blk(a.local.cli1).exNotes.ex2 = { pain: 3 };
+  srv.online = false; await a.sync.save('cli1');      // sin conexión al final y se cierra la app
+  srv.online = true;
+  clock.t += 60_000;
+  const n = device(srv, 'N', { storage, clock }); n.load('cli1');
+  assert.deepEqual(n.sync.recover().map(x => x.ok), [true]);
+  await tick();
+  const nube = blk(srv.get('cli1')).log;
+  for (let s = 0; s < 3; s++) assert.deepEqual(nube['ex2|' + s], SERIE(String(100 + s), String(5 + s), String(s)));
+  assert.deepEqual(blk(srv.get('cli1')).exNotes.ex2, { pain: 3 });
+  assert.deepEqual(nube['ex1|0'], { kg: 60, reps: 8 });
+  assert.equal(conflictos(a).length + conflictos(n).length, 0);
+});

@@ -147,7 +147,8 @@ async function restaurar(bucket, dir, opciones) {
     faltan.push(a);
   }
   informe.repuestos = faltan.map(function (a) { return a.ruta; });
-  informe.huella = require('../shared/copia-aditiva').huellaPlan(informe.repuestos.map(function (r) { return 'storage|' + r; }));
+  // La huella cubre la ruta Y el contenido (sha256, tipo y token) de cada archivo que se subiría.
+  informe.huella = require('../shared/copia-aditiva').huellaPlan(faltan.map(function (a) { return 'storage|' + a.ruta + '#' + a.sha256 + '|' + (a.tipo || '') + '|' + (a.token || ''); }));
   if (!opciones.apply) return informe;
   if (opciones.plan !== undefined && opciones.plan !== informe.huella) {
     const e = new Error('El plan ya no es el revisado (huella ' + informe.huella + '). No se ha escrito nada: repite el simulacro.');

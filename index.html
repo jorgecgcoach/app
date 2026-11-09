@@ -1653,6 +1653,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
 <script src="shared/safe-save.js?v=20261109-instantaneas"></script>
+<script src="shared/client-catalog.js?v=20261109-c1"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -3163,7 +3164,7 @@ function applyRemoteDoc(id,doc){
     if(!doc)return;
     if(doc.coachCode)DATA.coachCode=doc.coachCode;
     if(doc.codes&&typeof doc.codes==='object')DATA.codes=window.SafeSave.patchInPlace(DATA.codes||{},doc.codes);
-    if(Array.isArray(doc.exLibrary))DATA.exLibrary=doc.exLibrary;
+    if(Array.isArray(doc.exLibrary)){DATA.exLibrary=doc.exLibrary;scheduleCatalogSync();}
     if(doc.templates&&typeof doc.templates==='object')DATA.templates=window.SafeSave.patchInPlace(DATA.templates||{},doc.templates);
     if(doc.negocio)DATA.negocio=normNegocio(doc.negocio);
   }else if(doc===null){
@@ -3349,6 +3350,36 @@ function scheduleContactsSync(){
   clearTimeout(_contactsSyncT);
   _contactsSyncT=setTimeout(syncContactsCollection,1500);
 }
+/* ---- Catálogo de vídeos para clientes (C1 · H1, opción A; shared/client-catalog.js) ----
+   Solo con AUTH_ENABLED. El entrenador mantiene catalog/exercises = {nombre, vídeo general}
+   de su biblioteca propia; el cliente lo lee en vez de coach_data. No pasa por el guardado
+   seguro: es un documento derivado de coach_data, con un único escritor (el entrenador),
+   que se rehace entero desde la biblioteca y solo se escribe si su contenido cambia. */
+let _catalogT=null,_catalogSig=null;
+function scheduleCatalogSync(){
+  if(!AUTH_ENABLED||!window.db||!window.ClientCatalog||!(SESSION&&SESSION.role==='coach'))return;
+  clearTimeout(_catalogT);
+  _catalogT=setTimeout(syncClientCatalog,2000);
+}
+async function syncClientCatalog(){
+  if(!AUTH_ENABLED||!window.db||!window.ClientCatalog||!(SESSION&&SESSION.role==='coach')||!DATA)return;
+  const ref=window.db.collection('catalog').doc('exercises');
+  try{
+    const items=window.ClientCatalog.build(DATA.exLibrary).items;
+    const sig=window.ClientCatalog.signature(items);
+    if(_catalogSig===null){const s=await ref.get();_catalogSig=s.exists?window.ClientCatalog.signature((s.data()||{}).items):'';}
+    if(sig===_catalogSig)return;
+    await ref.set({items,count:items.length,updatedAt:new Date().toISOString()});
+    _catalogSig=sig;
+  }catch(e){_catalogSig=null;console.warn('[catálogo] no se pudo actualizar',(e&&e.code)||'error');}
+}
+async function loadClientCatalog(){
+  if(!window.db||!window.ClientCatalog)return [];
+  try{
+    const s=await window.db.collection('catalog').doc('exercises').get();
+    return s.exists?window.ClientCatalog.sanitize((s.data()||{}).items):[];
+  }catch(e){console.warn('[catálogo] no disponible',(e&&e.code)||'error');return [];}
+}
 function syncContactsCollection(){
   if(!CONTACTS_COLLECTION||!window.db||!(SESSION&&SESSION.role==='coach'))return;
   const local=(DATA.negocio&&Array.isArray(DATA.negocio.contacts))?DATA.negocio.contacts:[];
@@ -3402,6 +3433,7 @@ function save(cidArg){
     if(role!=='coach')return; // sin sesión no se escribe nada
     sync.save(COACH_DOC);
     if(CONTACTS_COLLECTION) scheduleContactsSync();
+    scheduleCatalogSync();
     const cid=cidArg||(DATA.active&&DATA.active.c);
     if(cid&&DATA.clients[cid])sync.save(cid);
     scheduleSweep();
@@ -8488,10 +8520,13 @@ async function loadCoachDataAfterAuth(user){
     }
     throw e;
   }
+  scheduleCatalogSync();
   return DATA;
 }
 async function loadClientAfterAuth(user){
   // Una sola consulta por authUid. No lee coach_data ni la lista de códigos.
+  // El catálogo de vídeos (nombre + vídeo general, sin datos privados) se pide a la vez.
+  const catP=loadClientCatalog();
   const q=await window.db.collection('clients').where('authUid','==',user.uid).limit(1).get();
   if(q.empty){
     try{ await firebase.auth().signOut(); }catch(_){}
@@ -8500,7 +8535,7 @@ async function loadClientAfterAuth(user){
     throw err;
   }
   const d=q.docs[0];
-  DATA={clients:{},active:{c:d.id,b:null},coachCode:'',codes:{},exLibrary:[],templates:{workouts:[],diets:[]},negocio:normNegocio(null)};
+  DATA={clients:{},active:{c:d.id,b:null},coachCode:'',codes:{},exLibrary:await catP,templates:{workouts:[],diets:[]},negocio:normNegocio(null)};
   DATA.clients[d.id]=d.data();
   const sync=getSync(); if(sync) sync.setBase(d.id, d.data());
   SESSION={role:'client', clientId:d.id, authUid:user.uid};

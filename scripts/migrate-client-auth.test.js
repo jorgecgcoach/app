@@ -71,5 +71,5 @@ test('el flag de la app sigue apagado y las reglas siguen con el marcador', func
   assert.match(html, /function loadCoachDataAfterAuth\(/);
   assert.match(html, /function loadClientAfterAuth\(/);
   assert.match(rules, /REEMPLAZAR_UID_DEL_COACH/);
-  assert.match(rules, /request\.auth\.token\.role == 'coach'/);
+  assert.match(rules, /request\.auth\.token\.get\('role', ''\) == 'coach'/);
 });

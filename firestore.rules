@@ -30,7 +30,7 @@ service cloud.firestore {
 
     function isCoach() {
       return signedIn() && (
-        request.auth.token.role == 'coach'
+        request.auth.token.get('role', '') == 'coach'
         || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
       );
     }
@@ -60,6 +60,17 @@ service cloud.firestore {
 
     match /contacts/{contactId} {
       allow read, write: if isCoach();
+    }
+
+    // Catálogo de vídeos para clientes (shared/client-catalog.js): nombre + vídeo general de la
+    // biblioteca propia. Sin datos personales. Lo lee cualquier sesión; solo escribe el entrenador.
+    match /catalog/{docId} {
+      allow get: if signedIn() && docId == 'exercises';
+      allow create, update: if isCoach() && docId == 'exercises'
+        && request.resource.data.keys().hasOnly(['items', 'count', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 3000;
+      allow delete: if isCoach();
     }
 
     match /{document=**} {

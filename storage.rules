@@ -1,0 +1,54 @@
+rules_version = '2';
+// BORRADOR de reglas ESTRICTAS de Storage. NO DESPLEGAR todavía (ver docs/firestore-auth.md y el plan de migración de C1).
+// A propósito NO está enlazado en firebase.json, para que un `firebase deploy` sin --only
+// no lo publique por error. Se desplegará con:
+//   npx firebase deploy --only storage --project appjorgecgcoach   (paso 6 del plan, con autorización)
+//
+// Rutas que usa la app:
+//   clients/{clientId}/photos/{archivo}.jpg      fotos (perfil, progreso)
+//   clients/{clientId}/analitica/{archivo}.pdf   analíticas
+//
+// Quién puede:
+// - Entrenador (mismo criterio que firestore.rules: claim role == 'coach' o UID de la lista):
+//   todo dentro de clients/.
+// - Cliente: solo su carpeta, comprobando en Firestore que clients/{clientId}.authUid es su uid.
+// - Nadie más: ni anónimos ni otros clientes.
+//
+// OJO: los enlaces guardados con getDownloadURL llevan un token y NO pasan por estas reglas.
+// Estas reglas cierran el acceso por ruta; los enlaces ya guardados siguen funcionando para quien
+// los tenga. Al cerrar Firestore nadie de fuera podrá leerlos de las fichas.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isCoach() {
+      return request.auth != null && (
+        request.auth.token.get('role', '') == 'coach'
+        || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
+      );
+    }
+
+    function ownsClient(clientId) {
+      return request.auth != null
+        && clientId != 'coach_data'
+        && firestore.get(/databases/(default)/documents/clients/$(clientId)).data.authUid == request.auth.uid;
+    }
+
+    match /clients/{clientId}/photos/{file} {
+      allow read: if isCoach() || ownsClient(clientId);
+      allow write: if (isCoach() || ownsClient(clientId))
+        && (request.resource == null
+            || (request.resource.size < 8 * 1024 * 1024 && request.resource.contentType.matches('image/.*')));
+    }
+
+    match /clients/{clientId}/analitica/{file} {
+      allow read: if isCoach() || ownsClient(clientId);
+      allow write: if (isCoach() || ownsClient(clientId))
+        && (request.resource == null
+            || (request.resource.size < 20 * 1024 * 1024 && request.resource.contentType == 'application/pdf'));
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -707,6 +707,13 @@
           return;
         }
       }
+      // Instantánea MÁS VIEJA que la versión que ya conocemos (cada escritura
+      // sube _rev). Con conexión lenta, el aviso de un guardado anterior puede
+      // llegar después de que este dispositivo haya guardado otra vez; no trae
+      // nada nuevo. Si se usara, la pantalla y la base retrocederían (series
+      // que "desaparecen") y el siguiente cambio chocaría contra la nube como
+      // "cambiado en otro dispositivo" sin serlo.
+      if (raw && s.base !== null && (Number(raw._rev) || 0) < s.rev) return;
       if (deepEqual(incoming, s.base)) return; // eco de nuestra propia escritura
       s.latestRemote = incoming;
       const local = getLocal(id);
@@ -864,5 +871,6 @@
     };
   }
 
-  return { diffDocs, applyOps, merge3, deepEqual, clone, stripSync, patchInPlace, arrayKey, createSync, createJournal, pathLabel, SYNC_FIELDS };
+  const VERSION = '20261109-instantaneas';
+  return { VERSION, diffDocs, applyOps, merge3, deepEqual, clone, stripSync, patchInPlace, arrayKey, createSync, createJournal, pathLabel, SYNC_FIELDS };
 });

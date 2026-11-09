@@ -1652,7 +1652,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
-<script src="shared/safe-save.js?v=20261109-marca"></script>
+<script src="shared/safe-save.js?v=20261109-instantaneas"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -2630,7 +2630,7 @@ function freshData(){
 // los datos reales por los de ejemplo (eso los machacaría al guardar).
 // Carga el META del entrenador (active, coachCode, codes, exLibrary). Nunca los
 // clientes pesados: eso depende de quién ha iniciado sesión.
-async function loadMeta(){
+async function loadMeta(gen){
   // Con Auth, un cliente no descarga coach_data (ahí están los códigos y el negocio).
   if(AUTH_ENABLED&&SESSION&&SESSION.role==='client'){
     const err=new Error('auth-client-no-meta');
@@ -2640,6 +2640,7 @@ async function loadMeta(){
   let snap;
   try{ snap=await window.db.collection('clients').doc(COACH_DOC).get(); }
   catch(e){ e._stage='fetch'; throw e; }
+  loadStillCurrent(gen);
   const sync=getSync();
   if(!snap.exists){
     // Instalación nueva: no hay nada. Se creará al primer guardado.
@@ -2657,18 +2658,34 @@ async function loadMeta(){
 }
 // Carga los datos según el rol. Si falla la conexión LANZA el error: nunca
 // sustituye los datos reales por los de ejemplo (eso los machacaría al guardar).
-async function loadDataFromFirestore(){
-  const timeoutPromise=new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout Firestore 30s')),30000));
-  await Promise.race([loadDataFirestoreReal(),timeoutPromise]);
+// Cada carga lleva un número. Si se agota el tiempo (o empieza otra), esa carga
+// queda abandonada: aunque su descarga termine más tarde, NO toca DATA ni la
+// base del guardado seguro. Antes, una carga abandonada que acababa tarde
+// (conexión lenta en el iPhone, reintento de entrar) sustituía a mitad de
+// sesión lo que había en pantalla por una versión vieja de la ficha: series
+// que "desaparecían" y conflictos falsos al seguir registrando.
+let _loadGen=0;
+function loadStillCurrent(gen){
+  if(gen!==undefined&&gen!==_loadGen){const e=new Error('carga abandonada (llegó tarde)');e._stage='fetch';e._abandoned=true;throw e;}
 }
-async function loadDataFirestoreReal(){
-  await loadMeta();
+async function loadDataFromFirestore(){
+  const gen=++_loadGen;
+  let t=null;
+  const timeoutPromise=new Promise((_,rej)=>{t=setTimeout(()=>{if(gen===_loadGen)_loadGen++;rej(new Error('Timeout Firestore 30s'));},30000);});
+  const real=loadDataFirestoreReal(gen);
+  real.catch(()=>{}); // si se abandona, su error tardío no debe quedar suelto
+  try{ await Promise.race([real,timeoutPromise]); }
+  finally{ clearTimeout(t); }
+}
+async function loadDataFirestoreReal(gen){
+  await loadMeta(gen);
   if(window._metaFresh){ try{ensureData();}catch(e){e._stage='prepare';throw e;} afterDataLoaded(); return DATA; }
   const role=SESSION&&SESSION.role;
   const sync=getSync();
   try{
     if(role==='coach'){
       const snap=await window.db.collection('clients').get();
+      loadStillCurrent(gen);
       const existing=new Set();
       snap.forEach(d=>{ if(d.id!==COACH_DOC){ DATA.clients[d.id]=d.data(); existing.add(d.id); if(sync)sync.setBase(d.id,d.data()); } });
       // Clientes que solo viven dentro del meta antiguo: aún no tienen documento.
@@ -2677,6 +2694,7 @@ async function loadDataFirestoreReal(){
     }else if(role==='client'){
       const cid=SESSION.clientId;
       const cs=await window.db.collection('clients').doc(cid).get();
+      loadStillCurrent(gen);
       if(cs.exists){ DATA.clients[cid]=cs.data(); if(sync)sync.setBase(cid,cs.data()); }
       else if(window._metaClients&&window._metaClients[cid]){ DATA.clients[cid]=window._metaClients[cid]; if(sync)sync.setBase(cid,null); }
     }
@@ -3077,7 +3095,8 @@ function showSaveError(kind,cid,info){
     b.innerHTML='⚠️ NO se ha guardado '+escapeHtml(who)+': se cambió a la vez en otro dispositivo'+(where?' <small style="opacity:.85">['+where+']</small>':'')+'. Para no pisar nada, este dispositivo no guardará hasta que elijas.'
       +'<br><button style="'+SAVE_BTN_CSS+'" onclick="downloadPendingChanges(\''+cid+'\')">⬇️ Descargar mis cambios</button>'
       +'<button style="'+SAVE_BTN_CSS+'" onclick="discardPendingChanges(\''+cid+'\')">'+(hasResolveWithCloud()?'☁️ Usar la nube solo en lo que choca':'Usar lo de la nube')+'</button>'
-      +'<button style="'+SAVE_BTN_CSS+'" onclick="location.reload()">Recargar</button>';
+      +'<button style="'+SAVE_BTN_CSS+'" onclick="location.reload()">Recargar</button>'
+      +'<div style="opacity:.7;font-size:.7rem;margin-top:6px">Versión de guardado: '+escapeHtml(String((window.SafeSave&&window.SafeSave.VERSION)||'anterior'))+'</div>';
     return;
   }
   b.innerHTML='⚠️ Los últimos cambios NO están guardados en la nube. Siguen en este dispositivo y se guardarán solos al volver la conexión. No cierres la app.';

@@ -30,12 +30,34 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const SYNC_FIELDS = ['_rev', '_updatedAt', '_updatedBy'];
+  // _writers: marcas de las últimas escrituras (la más reciente al final). Sirve
+  // para reconocer un envío propio cuya respuesta se perdió aunque otro
+  // dispositivo haya escrito después (ver ownAttempt).
+  const SYNC_FIELDS = ['_rev', '_updatedAt', '_updatedBy', '_writers'];
+  const WRITERS_KEEP = 12;
+  function writersOf(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw._writers)) return raw._writers.filter(t => typeof t === 'string');
+    return raw._updatedBy ? [raw._updatedBy] : [];
+  }
+  function syncStamp(raw, tag, rev, at) {
+    const w = writersOf(raw).filter(t => t !== tag);
+    w.push(tag);
+    return { _rev: rev, _updatedAt: at, _updatedBy: tag, _writers: w.slice(-WRITERS_KEEP) };
+  }
   const KEY_FIELDS = ['id', 'uid', 'date'];
   const DOC_LIMIT = 1048487;
   const JOURNAL_PREFIX = 'jcg_pending:';
   const TAB_PREFIX = 'jcg_tab:';
   const TAB_STALE_MS = 15000;
+
+  function randomId() {
+    try {
+      const c = typeof crypto !== 'undefined' ? crypto : (typeof globalThis !== 'undefined' && globalThis.crypto);
+      if (c && c.getRandomValues) return Array.from(c.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
+    } catch (_) {}
+    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  }
 
   function isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -342,7 +364,9 @@
     }
     return {
       heartbeat,
-      put(id, ops) { if (storage) safe(() => storage.setItem(keyFor(id), JSON.stringify({ at: now(), ops }))); },
+      // own: por cada guardado enviado y aún sin confirmar, su marca y los cambios
+      // posteriores a lo que envió. Sirve al reabrir si la nube lleva esa marca.
+      put(id, ops, own) { if (storage) safe(() => storage.setItem(keyFor(id), JSON.stringify(own && own.length ? { at: now(), ops, own } : { at: now(), ops }))); },
       clear(id) { if (storage) safe(() => storage.removeItem(keyFor(id))); },
       /* Entradas de pestañas que ya no están vivas (o de esta misma). */
       orphans() {
@@ -362,7 +386,7 @@
             }
             let entry = null;
             try { entry = JSON.parse(storage.getItem(key)); } catch (_) {}
-            if (entry && Array.isArray(entry.ops)) out.push({ key, tab, id, at: entry.at, ops: entry.ops });
+            if (entry && Array.isArray(entry.ops)) out.push({ key, tab, id, at: entry.at, ops: entry.ops, own: Array.isArray(entry.own) ? entry.own : [] });
           }
           return out;
         }, []);
@@ -399,7 +423,7 @@
 
     function st(id) {
       let s = states.get(id);
-      if (!s) { s = { known: false, base: null, rev: 0, inflight: null, again: false, blocked: null, remoteQueued: undefined, latestRemote: undefined, lastError: null }; states.set(id, s); }
+      if (!s) { s = { known: false, base: null, rev: 0, inflight: null, again: false, blocked: null, remoteQueued: undefined, latestRemote: undefined, lastError: null, attempts: [], serverWriters: [] }; states.set(id, s); }
       return s;
     }
     function err(kind, extra) { const e = new Error(kind); e.kind = kind; Object.assign(e, extra || {}); return e; }
@@ -416,6 +440,8 @@
       s.rev = (raw && raw._rev) || 0;
       s.blocked = null;
       s.absorbed = null;
+      s.attempts = [];
+      s.serverWriters = writersOf(raw);
     }
     function forget(id) { states.delete(id); journal.clear(id); }
 
@@ -436,6 +462,43 @@
       return ops.filter(op => !(isInit(op) && s.absorbed.get(pathLabel(op.p)) === JSON.stringify(op.a)));
     }
     function localOps(id, from, local) { return filterOps(st(id), diffDocs(from || {}, local, opts(id))); }
+
+    /* ---- guardados propios sin confirmar ----
+       Si una transacción llega a la nube pero la respuesta se pierde (corte,
+       tiempo agotado), la base se queda atrás y el siguiente cambio del mismo
+       campo parecería "cambiado en otro dispositivo". Cada envío lleva una
+       marca única (pestaña ~ instancia aleatoria ~ contador) que se escribe
+       en _updatedBy y se añade a _writers (las últimas escrituras). Una marca
+       solo entra en _writers cuando su escritura se confirma en el servidor,
+       así que si la nube trae la marca de un envío de aquí, ese envío llegó,
+       sin adivinar. Entonces los pendientes se cuentan desde lo que se envió
+       y no desde la base vieja. Cada cambio se sigue comprobando campo a
+       campo contra la nube: si otro dispositivo cambió después ese mismo
+       dato, sigue siendo conflicto. Sin marca propia, todo como antes. */
+    const MAX_ATTEMPTS = 20;
+    let attemptSeq = 0;
+    // Identificador aleatorio de esta instancia (cada carga de la app es una
+    // nueva): aunque dos dispositivos generasen la misma tabId, sus marcas no
+    // coinciden. 64 bits del generador criptográfico si existe.
+    const instanceId = randomId();
+    // El envío de aquí más reciente cuya marca está en la nube.
+    function ownAttempt(s, raw) {
+      if (!s.attempts.length) return null;
+      const w = writersOf(raw);
+      for (let i = s.attempts.length - 1; i >= 0; i--) if (w.indexOf(s.attempts[i].tag) >= 0) return s.attempts[i];
+      return null;
+    }
+    // Cambios locales que faltan en la nube, según qué versión hay allí.
+    function opsAgainst(id, s, raw, local) {
+      const own = ownAttempt(s, raw);
+      return { own, ops: localOps(id, own ? own.sent : s.base, local) };
+    }
+    function journalPut(id, ops) {
+      const s = st(id);
+      const local = getLocal(id);
+      const own = local === undefined ? [] : s.attempts.map(a => ({ tag: a.tag, ops: localOps(id, a.sent, local) }));
+      journal.put(id, ops, own);
+    }
     function absorb(ids, fn) {
       const snaps = [];
       for (const id of ids || []) {
@@ -484,7 +547,7 @@
     // editando tiene que sobrevivir a un cierre: al journal.
     function keepPending(id) {
       const ops = pendingOps(id);
-      if (ops.length) journal.put(id, ops);
+      if (ops.length) journalPut(id, ops);
     }
 
     function save(id) {
@@ -510,40 +573,54 @@
       // un journal anterior ya no vale y al reabrir resucitaría valores viejos.
       if (!ops.length) { journal.clear(id); s.lastError = null; status(id, 'saved'); return { ok: true, noop: true }; }
       if (jsonSize(sent) > limit) { s.lastError = 'size'; status(id, 'size'); return { ok: false, reason: 'size' }; }
-      journal.put(id, ops);
+      // Este envío: su marca queda apuntada (en memoria y en el journal) ANTES
+      // de mandarlo, por si llega a la nube y la respuesta no vuelve.
+      const attempt = { tag: (cfg.tabId || 'tab') + '~' + instanceId + '~' + (++attemptSeq), sent };
+      s.attempts.push(attempt);
+      if (s.attempts.length > MAX_ATTEMPTS) s.attempts.shift();
+      journalPut(id, ops);
       status(id, 'saving');
       let result;
+      const tx = cfg.db.runTransaction(async t => {
+        const snap = await t.get(ref(id));
+        const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
+        const raw = exists ? snap.data() : null;
+        s.latestRemote = raw ? clone(stripSync(raw)) : null;
+        if (!exists && baseAtStart !== null) throw err('conflict', { conflicts: [{ path: '(documento)', why: 'borrado en otro dispositivo' }] });
+        const remoteDoc = raw ? stripSync(raw) : {};
+        // ¿La nube tiene justo lo que escribió un envío anterior de aquí? Entonces
+        // solo falta lo editado después de ese envío.
+        const prev = ownAttempt(s, raw);
+        const sendOps = prev ? localOps(id, prev.sent, sent) : ops;
+        const merged = applyOps(remoteDoc, sendOps);
+        if (merged.conflicts.length) throw err('conflict', { conflicts: merged.conflicts });
+        if (prev && deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev: (raw && raw._rev) || 0, writers: writersOf(raw), wrote: false };
+        if (jsonSize(merged.doc) > limit) throw err('size');
+        const rev = ((raw && raw._rev) || 0) + 1;
+        t.set(ref(id), Object.assign({}, merged.doc, syncStamp(raw, attempt.tag, rev, new Date(now()).toISOString())));
+        return { doc: merged.doc, rev, writers: syncStamp(raw, attempt.tag, rev, '')._writers, wrote: true };
+      });
       try {
-        result = await withTimeout(cfg.db.runTransaction(async t => {
-          const snap = await t.get(ref(id));
-          const exists = typeof snap.exists === 'function' ? snap.exists() : !!snap.exists;
-          const raw = exists ? snap.data() : null;
-          s.latestRemote = raw ? clone(stripSync(raw)) : null;
-          if (!exists && baseAtStart !== null) throw err('conflict', { conflicts: [{ path: '(documento)', why: 'borrado en otro dispositivo' }] });
-          const merged = applyOps(raw ? stripSync(raw) : {}, ops);
-          if (merged.conflicts.length) throw err('conflict', { conflicts: merged.conflicts });
-          if (jsonSize(merged.doc) > limit) throw err('size');
-          const rev = ((raw && raw._rev) || 0) + 1;
-          t.set(ref(id), Object.assign({}, merged.doc, { _rev: rev, _updatedAt: new Date(now()).toISOString(), _updatedBy: cfg.tabId || 'tab' }));
-          return { doc: merged.doc, rev };
-        }));
+        result = await withTimeout(tx);
       } catch (e) {
-        if (e && e.kind === 'conflict') {
+        if (e && (e.kind === 'conflict' || e.kind === 'size')) {
+          // Se rechazó antes de escribir: este envío no está en la nube.
+          s.attempts = s.attempts.filter(x => x !== attempt);
+          if (e.kind === 'size') { s.lastError = 'size'; status(id, 'size'); return { ok: false, reason: 'size' }; }
           s.blocked = e.conflicts;
           s.lastError = 'conflict';
+          keepPending(id);
           status(id, 'conflict', e.conflicts);
           return { ok: false, reason: 'conflict', conflicts: e.conflicts };
         }
-        if (e && e.kind === 'size') { s.lastError = 'size'; status(id, 'size'); return { ok: false, reason: 'size' }; }
+        // Puede haber llegado o no: se queda apuntado. Si la transacción
+        // termina más tarde, esa respuesta es la confirmación de Firestore.
+        if (e && e.kind === 'timeout') tx.then(r => lateConfirm(id, attempt, r), () => {});
         s.lastError = 'error';
         status(id, 'error', e);
         return { ok: false, reason: 'error', error: e };
       }
-      s.known = true;
-      s.base = clone(result.doc);
-      s.rev = result.rev;
-      s.lastError = null;
-      journal.clear(id);
+      confirmed(id, result, attempt);
       // Lo que se editó mientras la transacción estaba en marcha se vuelve a
       // montar encima de lo que quedó en el servidor.
       const nowLocal = getLocal(id);
@@ -552,6 +629,7 @@
         const rebased = applyOps(result.doc, further);
         if (rebased.conflicts.length) {
           s.blocked = rebased.conflicts;
+          keepPending(id);
           status(id, 'conflict', rebased.conflicts);
           return { ok: false, reason: 'conflict', conflicts: rebased.conflicts };
         }
@@ -562,6 +640,46 @@
       }
       status(id, 'saved');
       return { ok: true };
+    }
+
+    // Se olvidan los envíos hasta `attempt` (incluido): los anteriores ya no
+    // pueden llegar después (una transacción de Firestore falla si el documento
+    // cambió desde que lo leyó). Los posteriores, si los hay, siguen apuntados.
+    function dropAttemptsThrough(s, attempt) {
+      const i = attempt ? s.attempts.indexOf(attempt) : -1;
+      s.attempts = i < 0 ? [] : s.attempts.slice(i + 1);
+    }
+    // Firestore ha confirmado una versión escrita (o reconocida) por este dispositivo.
+    function confirmed(id, result, attempt) {
+      const s = st(id);
+      s.known = true;
+      s.base = clone(result.doc);
+      s.rev = result.rev;
+      s.serverWriters = result.writers || [];
+      dropAttemptsThrough(s, attempt);
+      s.lastError = null;
+      journal.clear(id);
+    }
+
+    /* La transacción que dimos por perdida (tiempo agotado) termina bien más
+       tarde: es la confirmación de Firestore. Solo se usa si nada más reciente
+       se ha visto del servidor entretanto; si no, la decidirá la marca. */
+    function lateConfirm(id, attempt, result) {
+      const s = st(id);
+      if (!result || s.inflight || s.blocked || s.attempts.indexOf(attempt) < 0 || s.rev >= result.rev) return;
+      confirmed(id, result, attempt);
+      const local = getLocal(id);
+      if (local === undefined) { status(id, 'saved'); return; }
+      const rebased = applyOps(result.doc, localOps(id, attempt.sent, local));
+      if (rebased.conflicts.length) {
+        s.blocked = rebased.conflicts;
+        keepPending(id);
+        status(id, 'conflict', rebased.conflicts);
+        return;
+      }
+      if (localOps(id, rebased.doc, local).length) cfg.applyLocal(id, rebased.doc);
+      if (pendingOps(id).length) save(id);
+      else status(id, 'saved');
     }
 
     function projected(id, doc) {
@@ -592,7 +710,10 @@
       if (deepEqual(incoming, s.base)) return; // eco de nuestra propia escritura
       s.latestRemote = incoming;
       const local = getLocal(id);
-      const ops = local === undefined ? [] : localOps(id, s.base, local);
+      // Si es la versión que escribió un envío de aquí cuya respuesta se perdió,
+      // lo pendiente se cuenta desde lo que se envió (ver ownAttempt).
+      const against = local === undefined ? { own: null, ops: [] } : opsAgainst(id, s, raw, local);
+      const ops = against.ops;
       if (incoming === null) {
         if (s.base === null) return; // nunca existió en el servidor: nada que hacer
         if (ops.length) {
@@ -615,8 +736,10 @@
       }
       s.base = incoming;
       s.rev = (raw && raw._rev) || 0;
+      s.serverWriters = writersOf(raw);
+      if (against.own) { dropAttemptsThrough(s, against.own); s.lastError = null; if (!ops.length && !s.attempts.length) journal.clear(id); }
       cfg.applyLocal(id, merged.doc);
-      status(id, 'remote');
+      status(id, against.own && !ops.length ? 'saved' : 'remote');
       if (ops.length) save(id);
     }
 
@@ -632,7 +755,12 @@
         if (ropts && ropts.othersOnly && entry.tab === (cfg.tabId || 'tab')) continue;
         const local = getLocal(entry.id);
         if (local === undefined) continue;
-        const merged = applyOps(local, entry.ops);
+        // La pestaña cerrada envió algo que sí llegó (la nube lleva su marca):
+        // solo falta lo que editó después de ese envío.
+        const w = st(entry.id).serverWriters || [];
+        let own = null;
+        for (let i = entry.own.length - 1; i >= 0 && !own; i--) if (w.indexOf(entry.own[i].tag) >= 0) own = entry.own[i];
+        const merged = applyOps(local, own ? own.ops : entry.ops);
         if (merged.conflicts.length) {
           st(entry.id).blocked = merged.conflicts;
           status(entry.id, 'conflict', merged.conflicts);
@@ -643,7 +771,7 @@
         // Todo lo pendiente del documento (no solo esta entrada): si hay varias
         // pestañas cerradas, la última no debe tapar a las anteriores.
         journal.drop(entry.key);
-        journal.put(entry.id, pendingOps(entry.id));
+        journalPut(entry.id, pendingOps(entry.id));
         report.push({ id: entry.id, ok: true });
         save(entry.id);
       }
@@ -658,6 +786,7 @@
       journal.clear(id);
       s.blocked = null;
       s.again = false;
+      s.attempts = [];
       if (s.latestRemote !== undefined) { s.base = s.latestRemote; s.latestRemote = undefined; }
       if (s.known) cfg.applyLocal(id, s.base ? clone(s.base) : null);
     }
@@ -688,7 +817,7 @@
           const rev = raw._rev || 0;
           if (deepEqual(merged.doc, remoteDoc)) return { doc: remoteDoc, rev, conflicts: merged.conflicts, wrote: false };
           if (jsonSize(merged.doc) > limit) throw err('size');
-          t.set(ref(id), Object.assign({}, merged.doc, { _rev: rev + 1, _updatedAt: new Date(now()).toISOString(), _updatedBy: cfg.tabId || 'tab' }));
+          t.set(ref(id), Object.assign({}, merged.doc, syncStamp(raw, cfg.tabId || 'tab', rev + 1, new Date(now()).toISOString())));
           return { doc: merged.doc, rev: rev + 1, conflicts: merged.conflicts, wrote: true };
         }));
       } catch (e) {
@@ -698,7 +827,7 @@
       }
       for (const entry of orphanEntries) journal.drop(entry.key);
       journal.clear(id);
-      s.blocked = null; s.again = false; s.latestRemote = undefined; s.lastError = null;
+      s.blocked = null; s.again = false; s.latestRemote = undefined; s.lastError = null; s.attempts = [];
       if (result.deleted) {
         // Borrado en la nube: no se resucita sin que el usuario lo cree de nuevo.
         s.base = null; s.rev = 0;

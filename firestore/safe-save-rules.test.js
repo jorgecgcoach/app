@@ -93,7 +93,8 @@ test('el cliente guarda su propia ficha por transacción y conserva authUid', as
   assert.equal(doc.sessions[0].notes, 'editada por el cliente');
   assert.deepEqual(doc.diet, { kcal: 2000 });
   assert.equal(doc._rev, 1);
-  assert.equal(doc._updatedBy, 'tab-cliente');
+  assert.match(doc._updatedBy, /^tab-cliente~[0-9a-f]{16}~1$/); // marca única por envío
+  assert.deepEqual(doc._writers, [doc._updatedBy]);
 });
 
 test('el cliente no puede guardar la ficha de otro ni coach_data (error, sin escribir)', async function () {

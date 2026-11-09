@@ -39,10 +39,16 @@ function resumir(colecciones) {
   const meta = clients[COACH_DOC] || {};
   const neg = meta.negocio || {};
   const fichas = Object.keys(clients).filter(function (id) { return id !== COACH_DOC; });
-  let bloques = 0, pagosCliente = 0, conAuth = 0;
+  let bloques = 0, pagosCliente = 0, conAuth = 0, registros = 0, notas = 0, sinMarca = 0;
   fichas.forEach(function (id) {
     const c = clients[id] || {};
     bloques += len(c.blocks);
+    (Array.isArray(c.blocks) ? c.blocks : []).forEach(function (b) {
+      const d = (b && b.data) || {};
+      registros += Object.keys(isObj(d.log) ? d.log : {}).length;
+      notas += Object.keys(isObj(d.exNotes) ? d.exNotes : {}).length;
+      if (d._logv !== 2) sinMarca++;
+    });
     pagosCliente += len(c.pagos);
     if (c.authUid) conAuth++;
   });
@@ -50,6 +56,9 @@ function resumir(colecciones) {
     fichas: fichas.length,
     fichasConCuenta: conAuth,
     bloques: bloques,
+    bloquesSinMarcaLogv: sinMarca,
+    seriesRegistradas: registros,
+    notasPorEjercicio: notas,
     pagosEnFichas: pagosCliente,
     hayDocumentoEntrenador: !!clients[COACH_DOC],
     codigos: Object.keys(meta.codes || {}).length,

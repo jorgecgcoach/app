@@ -1,0 +1,8 @@
+rules_version = '2';
+// Solo para el emulador de las pruebas de copias. Los scripts usan la cuenta de administración,
+// que no pasa por reglas; nadie más entra. NO es la regla de producción.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

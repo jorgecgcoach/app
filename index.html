@@ -1653,6 +1653,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
 <script src="shared/safe-save.js?v=20261109-instantaneas"></script>
+<script src="shared/copia-aditiva.js?v=20261110-copias"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -3512,31 +3513,51 @@ function exportBackup(){
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   toast('Copia descargada');
 }
+// Restaurar desde un archivo es ADITIVO (shared/copia-aditiva.js, igual que scripts/restaurar-copia.js):
+// solo añade lo que falta. Nunca borra ni cambia lo que ya existe, así que no se pierde nada registrado
+// después de la copia, y nunca revive códigos, PIN ni cuentas retirados. Antes enviaba la copia entera
+// como cambios: borraba las series registradas después de hacerla y volvía a poner códigos antiguos.
 async function importBackupFile(file){
   if(!file)return;
   let text;try{text=await file.text();}catch(e){toast('No se pudo leer el archivo');return;}
   let dump;try{dump=JSON.parse(text);}catch(e){toast('Ese archivo no es una copia válida');return;}
   if(!dump||!dump.clients||typeof dump.clients!=='object'){toast('Ese archivo no es una copia válida');return;}
-  const n=Object.keys(dump.clients).length;
-  if(!confirm('Vas a RESTAURAR desde la copia ('+n+' clientes).\n\nEsto sobrescribe en la nube los datos actuales con los del archivo. ¿Seguir?'))return;
-  DATA.clients=dump.clients;
-  if(dump.meta){DATA.active=dump.meta.active||DATA.active;DATA.coachCode=dump.meta.coachCode||DATA.coachCode;DATA.codes=dump.meta.codes||DATA.codes;DATA.exLibrary=dump.meta.exLibrary||DATA.exLibrary;}
-  try{ensureData();}catch(e){console.warn('ensureData import',e);}
-  // Restaurar va por el guardado seguro: se aplica la diferencia entre lo que
-  // se cargó de la nube y la copia. Si alguien ha cambiado algo en la nube
-  // desde que se abrió la app, ese cliente queda bloqueado (aviso rojo) en vez
-  // de pisarlo. Los clientes que no están en la copia no se tocan.
+  const CA=window.CopiaAditiva;
   const sync=getSync();
-  if(!sync){toast('Sin conexión con la nube: no se ha restaurado nada');return;}
-  let ok=0,fail=0;
-  for(const cid of Object.keys(DATA.clients)){
-    const r=await sync.save(cid);
-    if(r&&r.ok)ok++;else{fail++;console.warn('import cliente',cid,r&&r.reason);}
+  if(!CA||!sync){toast('Sin conexión con la nube: no se ha restaurado nada');return;}
+  // Simulacro: qué se añadiría, sin tocar nada todavía.
+  const plan=[];let nCambios=0;
+  for(const cid of Object.keys(dump.clients)){
+    if(cid===COACH_DOC||!dump.clients[cid]||typeof dump.clients[cid]!=='object')continue;
+    const cur=DATA.clients[cid];
+    const f=CA.fusionAditiva(cur===undefined?undefined:cur,CA.sinSync(dump.clients[cid]));
+    if(f.cambios.length){plan.push({cid,valor:f.valor,nuevo:cur===undefined});nCambios+=f.cambios.length;}
   }
-  window._splitDone=true;
-  {const r=await sync.save(COACH_DOC);if(!(r&&r.ok)){fail++;console.warn('import meta',r&&r.reason);}}
+  const m=dump.meta||{};
+  const metaActual={exLibrary:DATA.exLibrary||[],templates:DATA.templates||{workouts:[],diets:[]},negocio:DATA.negocio||{}};
+  const metaCopia={};['exLibrary','templates','negocio'].forEach(k=>{if(m[k]!==undefined)metaCopia[k]=m[k];});
+  const fm=CA.fusionAditiva(metaActual,metaCopia);
+  nCambios+=fm.cambios.length;
+  if(!nCambios){toast('Todo lo de la copia ya está en la nube: no hay nada que añadir');return;}
+  const nuevos=plan.filter(p=>p.nuevo).length;
+  const NL='\n';
+  if(!confirm('RESTAURAR desde la copia (solo añade lo que falta):'+NL+NL
+    +'• '+plan.length+' cliente(s) con datos que faltan'+(nuevos?(' ('+nuevos+' que ya no existían)'):'')+NL
+    +'• '+fm.cambios.length+' elemento(s) de biblioteca, plantillas o negocio'+NL+NL
+    +'No se borra ni se cambia nada de lo actual: lo registrado después de la copia se queda como está. Los códigos y el PIN no se tocan.'+NL+NL
+    +'¿Seguir?'))return;
+  for(const p of plan)DATA.clients[p.cid]=p.valor;
+  if(fm.cambios.length){DATA.exLibrary=fm.valor.exLibrary;DATA.templates=fm.valor.templates;DATA.negocio=normNegocio(fm.valor.negocio);}
+  try{ensureData();}catch(e){console.warn('ensureData import',e);}
+  // Va por el guardado seguro: si alguien cambia lo mismo a la vez, queda en conflicto (aviso rojo) en vez de pisarlo.
+  let ok=0,fail=0;
+  for(const p of plan){
+    const r=await sync.save(p.cid);
+    if(r&&r.ok)ok++;else{fail++;console.warn('import cliente',p.cid,r&&r.reason);}
+  }
+  if(fm.cambios.length){const r=await sync.save(COACH_DOC);if(!(r&&r.ok)){fail++;console.warn('import meta',r&&r.reason);}}
   if(typeof renderAll==='function')renderAll();
-  toast('Restaurado: '+ok+' clientes'+(fail?(' ('+fail+' con error)'):''));
+  toast('Restaurado (solo lo que faltaba): '+ok+' cliente(s)'+(fm.cambios.length?' y datos del entrenador':'')+(fail?(' · ⚠ '+fail+' con error'):''));
 }
 function openBackup(){
   const m=$("#backupScrim");if(m){m.classList.add('open');return}

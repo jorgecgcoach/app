@@ -1,0 +1,12 @@
+{
+  "_comentario": "SOLO pruebas de copias en emulador (proyecto demo-). Puertos propios para no chocar con otras pruebas.",
+  "emulators": {
+    "firestore": { "port": 8282 },
+    "storage": { "port": 9399 },
+    "ui": { "enabled": false },
+    "hub": { "port": 4412 },
+    "logging": { "port": 4512 },
+    "singleProjectMode": true
+  },
+  "storage": { "rules": "scripts/emulador-copias.storage.rules" }
+}

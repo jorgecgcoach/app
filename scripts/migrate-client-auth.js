@@ -161,67 +161,102 @@ async function applyMigration(dump) {
   const unlinked = [];
   let missing = 0;
   let codeChanged = 0;
+  let failed = 0;
+  let reset = 0;
+  let odd = 0;
+  const db = admin.firestore();
+  const metaRef = db.collection('clients').doc('coach_data');
+  // Códigos que valen HOY para una ficha: los de coach_data.codes que apuntan a ella y su campo code.
+  function vigentes(meta, live, cid) {
+    const set = new Set();
+    const codes = (meta && meta.codes && typeof meta.codes === 'object') ? meta.codes : {};
+    Object.keys(codes).forEach(function (k) { if (codes[k] && codes[k].client === cid) set.add(id.normAuthCode(k)); });
+    if (live && live.code) set.add(id.normAuthCode(live.code));
+    return set;
+  }
   for (const cid of Object.keys(collected.clients)) {
     if (cid === 'coach_data') { skipped++; continue; } // el meta del entrenador nunca lleva dueño
-    const list = (collected.byClient[cid] || []).filter(function (c) { return c.length >= 3; });
-    if (!list.length) {
+    const fromBackup = (collected.byClient[cid] || []).filter(function (c) { return c.length >= 3; });
+    if (!fromBackup.length) {
       skipped++;
       continue;
     }
-    const uids = [];
-    for (const code of list) {
-      const email = await id.clientEmailFromCode(code);
-      if (seenEmail.has(email) && seenEmail.get(email) !== cid) {
-        skipped++;
-        continue;
-      }
-      seenEmail.set(email, cid);
-      const password = id.clientPasswordFromCode(code);
-      let user;
-      try {
-        user = await admin.auth().createUser({ email: email, password: password });
-        created++;
-      } catch (e) {
-        if (e && e.code === 'auth/email-already-exists') {
+    const ref = db.collection('clients').doc(cid);
+    try {
+      // 1. Se decide con lo que hay AHORA en Firestore, no con la copia:
+      //    - ficha borrada después de la copia: no se vuelve a crear;
+      //    - solo los códigos de la copia que siguen valiendo hoy (un código cambiado o quitado no da acceso).
+      const [snap0, meta0] = await Promise.all([ref.get(), metaRef.get()]);
+      if (!snap0.exists) { skipped++; missing++; continue; }
+      const live0 = snap0.data() || {};
+      const ok0 = vigentes(meta0.exists ? meta0.data() : null, live0, cid);
+      const list = fromBackup.filter(function (c) { return ok0.has(c); });
+      if (!list.length) { skipped++; codeChanged++; continue; }
+      const linkedNow = [live0.authUid].concat(Array.isArray(live0.authUids) ? live0.authUids : []).filter(Boolean);
+      // 2. Cuentas. Repetible: si ya existe, se reutiliza.
+      const uids = [];
+      let rara = false;
+      for (const code of list) {
+        const email = await id.clientEmailFromCode(code);
+        if (seenEmail.has(email) && seenEmail.get(email) !== cid) { skipped++; continue; }
+        seenEmail.set(email, cid);
+        const password = id.clientPasswordFromCode(code);
+        let user;
+        try {
+          user = await admin.auth().createUser({ email: email, password: password });
+          created++;
+        } catch (e) {
+          if (!(e && e.code === 'auth/email-already-exists')) throw e;
           user = await admin.auth().getUserByEmail(email);
           existed++;
-        } else {
-          throw e;
+          // Una cuenta con ese correo que no es solo de contraseña (p. ej. Google) no es de las nuestras.
+          if ((user.providerData || []).some(function (p) { return p.providerId !== 'password'; })) { rara = true; break; }
+          // Existe pero aún no está vinculada a la ficha: pudo crearla otra persona (el alta pública de
+          // Firebase está abierta) con otra contraseña. Se le pone la contraseña del código y se cierran sus
+          // sesiones. Si ya está vinculada, es la del cliente y no se toca (repetir no le cierra la sesión).
+          if (linkedNow.indexOf(user.uid) < 0) {
+            await admin.auth().updateUser(user.uid, { password: password });
+            await admin.auth().revokeRefreshTokens(user.uid);
+            reset++;
+          }
         }
+        if (uids.indexOf(user.uid) < 0) uids.push(user.uid);
       }
-      if (uids.indexOf(user.uid) < 0) uids.push(user.uid);
-    }
-    if (!uids.length) continue;
-    // Se decide con la ficha ACTUAL de Firestore (no con la de la copia), dentro de una transacción:
-    // - si la ficha se borró después de la copia, no se vuelve a crear;
-    // - si el entrenador ya le dio otro código con Auth (otro authUid), no se toca;
-    // - si la ficha tiene ahora un código que no está en la copia, no se vincula a la cuenta del viejo.
-    const ref = admin.firestore().collection('clients').doc(cid);
-    const res = await admin.firestore().runTransaction(async function (tx) {
-      const snap = await tx.get(ref);
-      if (!snap.exists) return 'missing';
-      const live = snap.data() || {};
-      const liveCode = live.code ? id.normAuthCode(live.code) : '';
-      if (liveCode && list.indexOf(liveCode) < 0) return 'code-changed';
-      const liveUid = live.authUid || null;
-      if (liveUid && uids.indexOf(liveUid) < 0) return 'unlinked';
-      // Solo se añaden estos campos; el resto de la ficha no se toca.
-      const patch = { authUid: liveUid || uids[0] };
-      const all = (Array.isArray(live.authUids) ? live.authUids.slice() : []);
-      uids.forEach(function (u) { if (all.indexOf(u) < 0) all.push(u); });
-      if (all.length > 1) patch.authUids = all;
-      tx.update(ref, patch);
-      return 'linked';
-    });
-    if (res === 'linked') linked++;
-    else {
+      if (rara) { skipped++; odd++; continue; }
+      if (!uids.length) continue;
+      // 3. Vincular en una transacción que vuelve a comprobarlo todo con lo último del servidor.
+      const res = await db.runTransaction(async function (tx) {
+        const [snap, meta] = await Promise.all([tx.get(ref), tx.get(metaRef)]);
+        if (!snap.exists) return 'missing';
+        const live = snap.data() || {};
+        const ok = vigentes(meta.exists ? meta.data() : null, live, cid);
+        if (!list.every(function (c) { return ok.has(c); })) return 'code-changed';
+        const liveUid = live.authUid || null;
+        if (liveUid && uids.indexOf(liveUid) < 0) return 'unlinked';
+        // Solo se añaden estos campos; el resto de la ficha no se toca.
+        const patch = { authUid: liveUid || uids[0] };
+        const all = (Array.isArray(live.authUids) ? live.authUids.slice() : []);
+        uids.forEach(function (u) { if (all.indexOf(u) < 0) all.push(u); });
+        if (all.length > 1) patch.authUids = all;
+        tx.update(ref, patch);
+        return 'linked';
+      });
+      if (res === 'linked') linked++;
+      else {
+        skipped++;
+        if (res === 'missing') missing++;
+        else if (res === 'code-changed') codeChanged++;
+        else unlinked.push(cid);
+      }
+    } catch (e) {
+      // Un fallo en una ficha no para las demás ni deja nada a medias en ella: sin la transacción final,
+      // su ficha no tiene authUid y las cuentas creadas no dan acceso a nada. Repetir lo completa.
+      failed++;
       skipped++;
-      if (res === 'missing') missing++;
-      else if (res === 'code-changed') codeChanged++;
-      else unlinked.push(cid);
+      console.error('! ' + cid + ' no se ha podido migrar (' + ((e && e.code) || 'error') + '). Se puede repetir.');
     }
   }
-  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length, missing: missing, codeChanged: codeChanged };
+  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length, missing: missing, codeChanged: codeChanged, failed: failed, reset: reset, odd: odd };
 }
 
 async function main() {
@@ -247,8 +282,10 @@ async function main() {
   }
   const result = await applyMigration(dump);
   console.log('Aplicado (' + result.mode + '). Creadas: ' + result.created + '. Ya existían: ' + result.existed + '. Fichas con authUid: ' + result.linked + '. Omitidas: ' + result.skipped +
-    ' (ficha borrada después de la copia: ' + result.missing + '; código cambiado después de la copia: ' + result.codeChanged + '; ya vinculada a otra cuenta: ' + result.unlinked + ').');
-  if (result.missing || result.codeChanged || result.unlinked) console.log('Revisa esas fichas en la app: no se ha tocado nada en ellas. Si hace falta, guarda otra vez su código en «Código de acceso».');
+    ' (ficha borrada después de la copia: ' + result.missing + '; código que ya no vale: ' + result.codeChanged + '; ya vinculada a otra cuenta: ' + result.unlinked +
+    '; cuenta con otro proveedor: ' + result.odd + '; con error: ' + result.failed + '). Cuentas previas no vinculadas que se han reasegurado: ' + result.reset + '.');
+  if (result.missing || result.codeChanged || result.unlinked || result.odd) console.log('Revisa esas fichas en la app: no se ha tocado nada en ellas. Si hace falta, guarda otra vez su código en «Código de acceso».');
+  if (result.failed) { console.error('Hubo errores: repite el mismo comando (no duplica nada).'); process.exitCode = 3; }
 }
 
 module.exports = {

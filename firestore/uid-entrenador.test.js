@@ -8,13 +8,13 @@ const { doc, getDoc, setDoc, collection, getDocs } = require('firebase/firestore
 const R = require('./reglas');
 const { preparar } = require('../scripts/preparar-reglas');
 
-const reglas = { estricta: R.leer('firestore.rules'), transicion: R.leer('firestore.transicion.rules'), rescate: R.leer('firestore.rescate.rules'), storage: R.leer('storage.rules') };
+const reglas = { estricta: R.leer('firestore.rules'), transicion: R.leer('firestore.transicion.rules'), congelado: R.leer('firestore.congelado.rules'), storage: R.leer('storage.rules') };
 const UID = R.uidEntrenador(reglas.estricta);
 const casi = UID.slice(0, -1) + (UID.slice(-1) === 'a' ? 'b' : 'a');
 
 test('todas las reglas tienen el MISMO UID de entrenador, una sola vez', () => {
   assert.equal(R.uidEntrenador(reglas.transicion), UID);
-  assert.equal(R.uidEntrenador(reglas.rescate), UID);
+  assert.equal(R.uidEntrenador(reglas.congelado), UID);
   assert.equal(R.uidEntrenador(reglas.storage), UID);
 });
 
@@ -46,9 +46,9 @@ test('preparar-reglas se niega con un UID mal formado o con el marcador', () => 
     assert.equal(r.huellas.length, R.ARCHIVOS_REGLAS.length);
     for (const n of R.ARCHIVOS_REGLAS) assert.ok(!fs.readFileSync(path.join(tmp, n), 'utf8').includes(R.MARCADOR));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'firebase.json'), 'utf8')).firestore, { rules: 'firestore.rules' });
-    // La transición y el rescate solo tocan Firestore: Storage se queda con sus reglas estrictas.
+    // La transición y la parada solo tocan Firestore: Storage se queda con sus reglas estrictas.
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'firebase.transicion.json'), 'utf8')), { firestore: { rules: 'firestore.transicion.rules' } });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'firebase.rescate.json'), 'utf8')), { firestore: { rules: 'firestore.rescate.rules' } });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'firebase.congelado.json'), 'utf8')), { firestore: { rules: 'firestore.congelado.rules' } });
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 

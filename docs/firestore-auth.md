@@ -126,7 +126,7 @@ Sin `ALLOW_AUTH_MIGRATION_APPLY=yes` el script sale y no escribe en el proyecto 
    - Entra tú con Google. Un cliente de prueba entra con su código de siempre. Comprueba que no ve el negocio ni otra ficha.
    - Deja `CONTACTS_COLLECTION` en false salvo que ya quieras la copia del CRM.
 
-Si algo falla, **no** se vuelven a publicar reglas abiertas. El procedimiento completo, con la ventana y la vuelta atrás que mantiene la base cerrada (`firestore.rescate.rules`, reactivar cuentas, contraseña de respaldo), está en [`docs/despliegue-c1.md`](despliegue-c1.md), que sustituye a este paso 7.
+Si algo falla, **no** se vuelven a publicar reglas abiertas. El procedimiento completo, con la ventana y la vuelta atrás que mantiene la base cerrada (parada `firestore.congelado.rules`, reactivar cuentas, contraseña de respaldo), está en [`docs/despliegue-c1.md`](despliegue-c1.md), que sustituye a este paso 7.
 
 Los avisos de GitHub Actions usan la cuenta de servicio y no pasan por estas reglas. Siguen igual.
 

@@ -857,6 +857,9 @@
       heartbeat: journal.heartbeat,
       orphans: journal.orphans,
       isKnown: id => st(id).known,
+      // Última versión conocida de la nube (solo lectura; la app del cliente la usa para no enviar
+      // cambios en los campos que solo decide el entrenador: shared/campos-cliente.js).
+      baseOf: id => st(id).base,
       isBlocked: id => !!st(id).blocked,
       blockedInfo: id => st(id).blocked,
       ids: () => Array.from(states.keys()),

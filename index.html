@@ -1656,6 +1656,7 @@ html,body{overflow-x:clip}
 <script src="shared/safe-save.js?v=20261109-instantaneas"></script>
 <script src="shared/copia-aditiva.js?v=20261110-copias3"></script>
 <script src="shared/client-catalog.js?v=20261109-c1"></script>
+<script src="shared/campos-cliente.js?v=20261111-c1"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -3179,7 +3180,13 @@ function getSync(){
       if(!DATA||!canWriteDoc(id))return undefined;
       if(id===COACH_DOC)return metaLocalDoc();
       const c=DATA.clients&&DATA.clients[id];
-      return c?sanitizeForFirestore(c):undefined;
+      if(!c)return undefined;
+      const doc=sanitizeForFirestore(c);
+      // Cliente: los campos del entrenador viajan siempre como están en la nube (shared/campos-cliente.js).
+      // Si no, un relleno por defecto (p. ej. un tipo de aviso nuevo) haría que las reglas rechazaran
+      // también sus series.
+      if(SESSION&&SESSION.role==='client'&&window.ClientFields&&SYNC&&SYNC.baseOf)return window.ClientFields.limitarEnvio(doc,SYNC.baseOf(id));
+      return doc;
     },
     applyLocal:applyRemoteDoc,
     onStatus:onSyncStatus

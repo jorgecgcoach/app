@@ -27,11 +27,15 @@ service firebase.storage {
       );
     }
 
+    // Una sola lectura de la ficha (cuenta como una lectura de Firestore; el límite es 2 por evaluación).
+    // Necesita que la cuenta de servicio de Storage tenga el rol roles/firebaserules.firestoreServiceAgent
+    // (solo datastore.entities.get). Ver docs/despliegue-c1.md, paso P5.
     function ownsClient(clientId) {
-      return request.auth != null
-        && clientId != 'coach_data'
-        && (firestore.get(/databases/(default)/documents/clients/$(clientId)).data.get('authUid', null) == request.auth.uid
-            || request.auth.uid in firestore.get(/databases/(default)/documents/clients/$(clientId)).data.get('authUids', []));
+      let ficha = request.auth != null && clientId != 'coach_data'
+        ? firestore.get(/databases/(default)/documents/clients/$(clientId)) : null;
+      return ficha != null
+        && (ficha.data.get('authUid', null) == request.auth.uid
+            || request.auth.uid in ficha.data.get('authUids', []));
     }
 
     match /clients/{clientId}/photos/{file} {

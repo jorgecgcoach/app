@@ -9,7 +9,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const MARCADOR = 'REEMPLAZAR_UID_DEL_COACH';
 // Todas las reglas que llevan el UID del entrenador (las que genera scripts/preparar-reglas.js).
-const ARCHIVOS_REGLAS = ['firestore.rules', 'firestore.transicion.rules', 'firestore.rescate.rules', 'storage.rules'];
+const ARCHIVOS_REGLAS = ['firestore.rules', 'firestore.transicion.rules', 'firestore.congelado.rules', 'storage.rules'];
 
 function dir() { return process.env.REGLAS_DIR || ROOT; }
 function leer(nombre) { return fs.readFileSync(path.join(dir(), nombre), 'utf8'); }

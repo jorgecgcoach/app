@@ -105,6 +105,8 @@ test('repetirla no duplica cuentas ni cambia nada', async () => {
   const r = await applyMigration(DUMP);
   assert.equal(r.created, 0);
   assert.equal(r.existed, 5);
+  assert.equal(r.reset, 0, 'repetirla no toca las cuentas ya vinculadas (no cierra sesiones)');
+  assert.equal(r.failed, 0);
   const despues = (await admin.firestore().collection('clients').get()).docs.map(d => [d.id, JSON.stringify(d.data())]);
   assert.deepEqual(despues, antes);
 });
@@ -133,6 +135,7 @@ test('con una copia anterior: no resucita fichas borradas, no pisa un authUid nu
   // Estado actual: c6 borrado después de la copia; c7 tiene hoy otro código; c8 ya tiene una cuenta nueva.
   await db.collection('clients').doc('c7').set(FICHA('Ficticio Siete', { code: 'NUEVO-7' }));
   await db.collection('clients').doc('c8').set(FICHA('Ficticio Ocho', { authUid: 'uid-nuevo-del-entrenador' }));
+  await db.collection('clients').doc('coach_data').set({ codes: { 'ANTES-8': { client: 'c8' } } }, { merge: true });
   const meta0 = (await db.collection('clients').doc('coach_data').get()).data();
   const r = await applyMigration(COPIA);
   assert.equal(r.linked, 0);
@@ -143,5 +146,74 @@ test('con una copia anterior: no resucita fichas borradas, no pisa un authUid nu
   assert.equal((await db.collection('clients').doc('c7').get()).data().authUid, undefined, 'el código viejo no abre la ficha');
   assert.equal((await db.collection('clients').doc('c8').get()).data().authUid, 'uid-nuevo-del-entrenador');
   assert.deepEqual((await db.collection('clients').doc('coach_data').get()).data(), meta0, 'coach_data intacto');
-  assert.equal(await asClient('VIEJO-7', async (cdb, uid) => miFicha(cdb, uid)), null);
+  await assert.rejects(asClient('VIEJO-7', async () => 1), 'ni siquiera se crea la cuenta del código viejo');
+});
+
+test('un código quitado en coach_data después de la copia (sin campo code en la ficha) no da acceso', async () => {
+  const db = admin.firestore();
+  await db.collection('clients').doc('c9').set(FICHA('Ficticio Nueve'));
+  const r = await applyMigration({ meta: { codes: { 'QUITADO-9': { client: 'c9' } } }, clients: { c9: FICHA('Ficticio Nueve') } });
+  assert.equal(r.codeChanged, 1);
+  assert.equal(r.created, 0);
+  assert.equal((await db.collection('clients').doc('c9').get()).data().authUid, undefined);
+  await assert.rejects(asClient('QUITADO-9', async () => 1));
+});
+
+test('cuenta creada antes por otra persona con otra contraseña: se reasegura y solo entra el código', async () => {
+  const db = admin.firestore();
+  const email = await ident.clientEmailFromCode('PREVIO-10');
+  const intruso = await admin.auth().createUser({ email, password: 'otra-clave-ficticia' });
+  await db.collection('clients').doc('c10').set(FICHA('Ficticio Diez'));
+  await db.collection('clients').doc('coach_data').set({ codes: { 'PREVIO-10': { client: 'c10' } } }, { merge: true });
+  const antes = new Date((await admin.auth().getUser(intruso.uid)).tokensValidAfterTime || 0).getTime();
+  await new Promise(r => setTimeout(r, 1100)); // la marca de revocación va en segundos
+  const r = await applyMigration({ meta: { codes: { 'PREVIO-10': { client: 'c10' } } }, clients: { c10: FICHA('Ficticio Diez') } });
+  assert.equal(r.reset, 1);
+  assert.equal(r.linked, 1);
+  const u = await admin.auth().getUser(intruso.uid);
+  assert.ok(new Date(u.tokensValidAfterTime).getTime() > antes, 'sesiones anteriores revocadas');
+  assert.equal(await asClient('PREVIO-10', async (cdb, uid) => (await miFicha(cdb, uid)).id), 'c10');
+  const app = initializeApp({ apiKey: 'demo', projectId: PROJECT }, 'intruso');
+  const auth = getAuth(app); connectAuthEmulator(auth, 'http://' + process.env.FIREBASE_AUTH_EMULATOR_HOST, { disableWarnings: true });
+  await assert.rejects(signInWithEmailAndPassword(auth, email, 'otra-clave-ficticia'), 'la contraseña de antes ya no vale');
+  await deleteApp(app);
+});
+
+test('verificar-vinculos: detecta una cuenta ajena puesta en una ficha mientras las reglas siguen abiertas', async () => {
+  const { verificarVinculos } = require('./verificar-vinculos');
+  const db = admin.firestore();
+  const intruso = await admin.auth().createUser({ email: 'intruso-ficticio@example.com', password: 'clave-ficticia-1' });
+  const c1 = (await db.collection('clients').doc('c1').get()).data();
+  await db.collection('clients').doc('c1').update({ authUids: [c1.authUid, intruso.uid] });
+  const r = await verificarVinculos(admin);
+  const porFicha = {};
+  r.problemas.forEach(p => { (porFicha[p.ficha] = porFicha[p.ficha] || []).push(p.tipo); });
+  assert.deepEqual(porFicha.c1, ['cuenta-que-no-es-de-sus-codigos']);
+  assert.deepEqual(porFicha.c8, ['cuenta-inexistente'], 'el uid de prueba de c8 no es una cuenta real');
+  for (const ok of ['c2', 'c3', 'c4', 'c10']) assert.equal(porFicha[ok], undefined, ok + ' cuadra');
+  assert.ok(!JSON.stringify(r).includes('intruso-ficticio') && !JSON.stringify(r).includes(intruso.uid), 'no imprime correos ni uids');
+  await db.collection('clients').doc('c1').update({ authUids: admin.firestore.FieldValue.delete() });
+});
+
+test('fallo a mitad: la ficha que falla queda sin acceso, las demás siguen, y repetir lo completa sin duplicar', async () => {
+  const db = admin.firestore();
+  await db.collection('clients').doc('c11').set(FICHA('Ficticio Once'));
+  await db.collection('clients').doc('c12').set(FICHA('Ficticio Doce'));
+  await db.collection('clients').doc('coach_data').set({ codes: { 'FALLA-11': { client: 'c11' }, 'BIEN-12': { client: 'c12' } } }, { merge: true });
+  const COPIA = { meta: { codes: { 'FALLA-11': { client: 'c11' }, 'BIEN-12': { client: 'c12' } } }, clients: { c11: FICHA('Ficticio Once'), c12: FICHA('Ficticio Doce') } };
+  const auth = admin.auth();
+  const original = auth.createUser.bind(auth);
+  const malo = await ident.clientEmailFromCode('FALLA-11');
+  auth.createUser = async (p) => { if (p.email === malo) { const e = new Error('cuota'); e.code = 'auth/quota-exceeded'; throw e; } return original(p); };
+  let r;
+  try { r = await applyMigration(COPIA); } finally { auth.createUser = original; }
+  assert.equal(r.failed, 1);
+  assert.equal(r.linked, 1);
+  assert.equal((await db.collection('clients').doc('c11').get()).data().authUid, undefined, 'sin vínculo a medias');
+  assert.ok((await db.collection('clients').doc('c12').get()).data().authUid);
+  const r2 = await applyMigration(COPIA);
+  assert.equal(r2.failed, 0);
+  assert.equal(r2.created, 1, 'solo la que faltaba');
+  assert.equal(r2.linked, 2);
+  assert.equal(await asClient('FALLA-11', async (cdb, uid) => (await miFicha(cdb, uid)).id), 'c11');
 });

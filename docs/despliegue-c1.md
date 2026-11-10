@@ -45,8 +45,8 @@ Lo que el cliente sí puede cambiar de su ficha y no es suyo: el programa dentro
 | P1 | Copia completa real, cifrada, en el PC y en el USB, verificada. | Tú en el PC (asistente de claves) y yo con tu autorización | `copia:verificar` sin problemas en las dos copias. |
 | P2 | Proveedores de Auth activos (Google, Correo/contraseña), `jorgecgcoach.github.io` autorizado, protección de enumeración de correos. | Hecho el 10-11-2026 | — |
 | P3 | Reglas generadas y probadas con el UID real. | Yo | Huellas anotadas. |
-| P4 | Ensayo de la migración con la copia: `node scripts/migrate-client-auth.js --backup <copia>` (no escribe nada). | Tú, conmigo | Dice «dry-run», cuántas cuentas crearía y avisos sin datos personales. |
-| P5 | **[Autorización]** Permiso de Storage para leer Firestore (abajo). | Tú | Comprobación de solo lectura del final de la sección. |
+| P4 | Ensayo de la migración con la copia: `node scripts/migrate-client-auth.js --backup <copia>` (no escribe nada). | Tú, conmigo | Dice «dry-run», cuántas fichas recibirán código nuevo y cuáles irían «a revisar», sin datos personales. |
+| P5 | Permiso de Storage para leer Firestore (abajo). **No se concede antes:** se hace en F4, tras comprobar la identidad exacta del agente de servicio y sus roles actuales. | Tú, en F4 | Comprobación de solo lectura del final de la sección. |
 | P6 | Comprobaciones en el iPhone real (lista al final). | Tú | Todo en verde. |
 
 ### P5. Permiso mínimo de Storage → Firestore
@@ -77,31 +77,35 @@ Para retirarlo: primero quitar de `storage.rules` las llamadas a `firestore.get`
 
 ## La ventana (noche, unos 45 minutos)
 
+Los clientes **cambian de código**: los de hoy (a menudo un documento de identidad) se pueden adivinar y no se migran. Cada ficha recibe un código aleatorio nuevo (12 símbolos, `XXXX-XXXX-XXXX`) que el entrenador entrega después. **Avisar a los clientes antes** de que esa noche cambiará su código y que lo recibirán por el canal habitual.
+
 | # | Paso | Tiempo |
 | --- | --- | --- |
-| F1 | Copia de la app («🛟 Copia → Descargar copia ahora») justo antes. | 2 min |
-| F2 | **[Autorización]** Crear las cuentas de clientes: `migrate-client-auth.js --backup <copia de F1> --apply` con `ALLOW_AUTH_MIGRATION_APPLY=yes`. Después, `node scripts/verificar-vinculos.js --proyecto-real` (solo lee): 0 problemas. | 5 min |
+| F1 | Copia de la app («🛟 Copia → Descargar copia ahora») justo antes. `node scripts/verificar-vinculos.js --proyecto-real` (solo lee): anotar si alguna ficha ya trae cuentas (no debería). | 3 min |
+| F2 | Cerrar la app del entrenador en **todos** los dispositivos (para que ninguno vuelva a escribir la lista de códigos antigua). | 1 min |
 | F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
-| F4 | **[Autorización]** Enseguida, reglas definitivas de Firestore y Storage. Justo después, otra vez `verificar-vinculos.js --proyecto-real`: 0 problemas. | 3 min |
-| F5 | Entrenador: entrar con Google en el ordenador, crear la contraseña de respaldo («🛟 Copia → 🔐 Acceso de respaldo»). | 5 min |
-| F6 | Cliente de prueba y comprobaciones sin sesión (abajo). | 10 min |
-| F7 | Seguimiento 24–48 h: consola → Firestore → Uso, sin picos de «permiso denegado»; Authentication → Usuarios. | — |
+| F4 | **[Autorización]** Enseguida, reglas definitivas de Firestore y Storage. Al desplegar Storage, comprobar antes la identidad exacta del agente de servicio y conceder solo el rol de P5. | 3 min |
+| F5 | **[Autorización]** Migración: `node scripts/migrate-client-auth.js --comprobar` (solo lee) y, si cuadra, `--apply` con `ALLOW_AUTH_MIGRATION_APPLY=yes`. **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
+| F6 | Entrenador: entrar con Google en el ordenador, crear la contraseña de respaldo («🛟 Copia → 🔐 Acceso de respaldo»). Abrir «Código de acceso» de cada cliente y entregarle su código nuevo. | 10 min + entregas |
+| F7 | Cliente de prueba y comprobaciones sin sesión (abajo). | 10 min |
+| F8 | Seguimiento 24–48 h: consola → Firestore → Uso, sin picos de «permiso denegado»; Authentication → Usuarios (no deben aparecer cuentas nuevas que no sean del entrenador). | — |
 
 ## Qué pasa entre fases, y cómo parar o volver atrás en cada una
 
 | Entre… | Exposición | Bloqueos posibles | Parar o volver atrás (sin abrir) |
 | --- | --- | --- | --- |
-| **Antes de F2** | La de hoy: las reglas de producción siguen abiertas. No cambia nada. | — | — |
-| **F2 → F3** (cuentas creadas, web antigua, reglas abiertas) | La de hoy, más una nueva: con las fichas abiertas, alguien podría escribir en una ficha el uid de una cuenta suya y **conservar el acceso tras F4**. Por eso `verificar-vinculos.js` en F2 y otra vez justo después de F4 (lo que se cuele entre medias aparece en la segunda). `authUid` en sí no es secreto: sin el código no sirve. | Ninguno: la web antigua ignora `authUid`. | Parar aquí es seguro: se puede dejar días. Repetir F2 no duplica nada. Deshacer no hace falta; si se quisiera, borrar las cuentas en Authentication y el campo `authUid` (no lo recomiendo). |
-| **F3 → F4** (web nueva publicada, reglas aún abiertas) | La misma de hoy, durante los minutos que tarda Pages. **Por eso F4 va enseguida.** El catálogo de vídeos no se puede escribir hasta F4 (se reintenta solo). | Un cliente sin cuenta (código nuevo después de F1) no entra con la web nueva: el entrenador guarda otra vez su código. | Volver a la web anterior es seguro **solo en esta fase** (las reglas siguen como hoy). |
-| **F4 en adelante** (reglas definitivas) | Ninguna para anónimos. Cada cliente ve solo su ficha; el entrenador, todo. | Móviles con la web antigua abierta sin recargar: no pueden leer ni guardar; lo pendiente queda en el dispositivo y se sube al recargar y entrar con su código. Un cliente cuya cuenta no se creó: «Código no válido» → el entrenador guarda otra vez su código. | Ver tabla siguiente. **No** volver a la web sin Auth: con las reglas cerradas no carga (no abre nada, pero deja a todos sin app). |
+| **Antes de F3** | La de hoy: las reglas de producción siguen abiertas. No se ha escrito nada. | — | Nada que deshacer. |
+| **F3 → F4** (web nueva publicada, reglas aún abiertas) | La misma de hoy, durante los minutos que tarda Pages. **Por eso F4 va enseguida.** Alguien podría escribir en una ficha el uid de una cuenta suya: la migración (F5) **no la acepta** (solo valen cuentas creadas por ella, con su marca `jcgCliente`) y `verificar-vinculos` la señala. | Ningún cliente entra todavía (aún no hay cuentas). | Volver a la web anterior es seguro **solo en esta fase** (las reglas siguen como hoy). |
+| **F4 → F5** (reglas definitivas, sin cuentas) | Ninguna para anónimos. | Los clientes no pueden entrar hasta F5–F6 (esperado: están avisados). | Parar aquí es seguro; la migración se puede hacer otro día. |
+| **F5 en adelante** | Ninguna para anónimos. Cada cliente ve solo su ficha; el entrenador, todo. | Clientes que aún no tienen su código nuevo. Fichas «a revisar». Móviles con la web antigua: no pueden leer ni guardar; lo pendiente queda en el dispositivo y se sube al entrar con el código nuevo. | Ver tabla siguiente. **No** volver a la web sin Auth: con las reglas cerradas no carga. Repetir la migración es seguro: no crea duplicados ni cambia códigos ya dados. |
 
 | Síntoma tras F4 | Qué se hace | Tiempo |
 | --- | --- | --- |
 | La app de los clientes estropea datos (p. ej. vacía series). | Desplegar `firestore.congelado.rules`. Los clientes siguen viendo su programa; lo que guarden se queda en su dispositivo. Arreglar la web, publicarla y volver a las definitivas. | 2 min |
 | Un cliente no puede guardar algo legítimo («permiso denegado»). | Si es uno: «Volver a entrar» en su aviso. Si son muchos: parada (fila anterior) mientras se arregla la app; **no** relajar los campos del entrenador. | 2 min |
-| Un cliente no puede entrar con su código. | Entrenador: «Código de acceso» → guardar su código otra vez. O repetir F2. | 1 min |
-| Google no entra en el iPhone. | Contraseña de respaldo (F5). La app la propone sola si Google vuelve sin sesión. | 1 min |
+| Un cliente no puede entrar con su código. | Comprobar que usa el código **nuevo**. Si no: entrenador → «Código de acceso» → 🎲 generar otro y guardar (crea su cuenta y quita las anteriores). | 1 min |
+| Una ficha sale «a revisar». | No tocarla con prisa: se queda sin acceso de cliente, sin borrar nada. Mirar en Authentication qué cuentas tiene; si no son claramente de ese cliente, el entrenador le genera un código nuevo (eso deja **solo** la cuenta nueva en la ficha). Las cuentas ajenas se pueden desactivar a mano después. | 5 min |
+| Google no entra en el iPhone. | Contraseña de respaldo (F6). La app la propone sola si Google vuelve sin sesión. | 1 min |
 | El entrenador no puede entrar de ninguna forma. | Desde el ordenador con Google. Los clientes siguen funcionando; los datos siguen protegidos. | — |
 | Fallo de pantallas o botones de la web nueva. | Arreglo en `main`, o volver a publicar la «última web buena con Auth». | 10 min |
 | Fotos del cliente fallan. | Falta P5: conceder el rol (un único permiso de lectura). El entrenador no se ve afectado. | 2 min |
@@ -109,7 +113,7 @@ Para retirarlo: primero quitar de `storage.rules` las llamadas a `firestore.get`
 
 **No usar** el historial de reglas de la consola para «volver a la versión anterior»: la anterior es la abierta.
 
-### Comprobaciones de F6
+### Comprobaciones de F7
 
 1. Sin sesión, solo lectura: `coach_data` → 403, listar `clients` → 403, foto por ruta sin token → 403. Si algo da 200, revisar qué reglas están publicadas y volver a desplegar las definitivas.
 2. Entrenador: inicio, clientes, Negocio, Biblioteca, una ficha; un cambio pequeño.
@@ -117,20 +121,35 @@ Para retirarlo: primero quitar de `storage.rules` las llamadas a `firestore.get`
 
 ## Migración: garantías
 
-- **Repetible:** cuentas existentes se reutilizan; repetir no crea duplicados ni cambia fichas ya vinculadas, ni cierra sus sesiones.
-- **Con lo de ahora, no con la copia:** solo se usan códigos que siguen valiendo hoy (`coach_data.codes` o el campo `code` de la ficha). Un código cambiado o quitado después de la copia no crea cuenta ni da acceso. Una ficha borrada no se vuelve a crear. Un `authUid` puesto después por el entrenador no se pisa.
-- **Cuentas creadas antes por otra persona** (el alta de Firebase es pública): si existe la cuenta de un código y aún no está vinculada, se le pone la contraseña del código y se cierran sus sesiones antes de vincularla. Cuentas con otro proveedor (p. ej. Google) con ese correo: no se vinculan y se avisa.
-- **Fallo parcial:** la ficha que falla no recibe `authUid` (sin vínculo, las cuentas no dan acceso a nada); las demás siguen; el comando termina con código 3 y basta repetirlo.
-- Pruebas: `npm run test:migracion` (emulador).
+- **Códigos nuevos, aleatorios:** 12 símbolos de base32 Crockford generados con el generador criptográfico (60 bits). Ningún código de hoy se reutiliza ni se le añade un sufijo; los antiguos se quitan de `coach_data.codes` y dejan de servir. Los códigos no se imprimen: se ven en la app del entrenador.
+- **No se fía de ninguna cuenta que ya exista.** El alta de Firebase es pública, así que una cuenta previa pudo crearla cualquiera:
+  - ficha que ya trae `authUid`/`authUids` y alguna cuenta no lleva la marca `jcgCliente` de **esa** ficha (marca que solo puede poner el Admin SDK) o tiene otro proveedor → **a revisar**, sin tocarla;
+  - si ya existe una cuenta para el código recién generado → **a revisar**, sin usar esa cuenta;
+  - nunca borra, desactiva ni reasigna cuentas, ni cambia contraseñas. Termina con código 3 si hay algo a revisar.
+- **Repetible:** las fichas ya migradas (cuentas con su marca) se saltan; repetir no crea cuentas, no cambia códigos ni cierra sesiones.
+- **Con lo de ahora, no con la copia:** lee la base de datos en el momento; una ficha borrada no se vuelve a crear; si el entrenador vincula una ficha mientras corre, no se pisa (transacción).
+- **Fallo parcial:** la ficha que falla no recibe código ni `authUid` (la cuenta suelta que pudo quedar no tiene código conocido ni ficha: no da acceso a nada); las demás siguen; basta repetirlo.
+- **Altas posteriores desde la app** (cliente nuevo o código regenerado): solo aceptan códigos generados; si la cuenta ya existiera, se rechaza y se pide otro código; la ficha queda con **solo** la cuenta nueva. Estas cuentas no llevan la marca (la web no puede ponerla): por eso la migración se ejecuta una sola vez y el control continuo es `verificar-vinculos.js`.
+- Pruebas: `npm run test:migracion` (emulador, 10 casos) y `shared/alta-codigo.test.js`.
 
-## iPhone: comprobaciones reales (P6 y F5)
+## Adivinar códigos: límites y protecciones
+
+- **Lo que Firebase limita:** solo por IP (`auth/too-many-requests`). Cada intento de código es un correo distinto, así que no hay bloqueo por cuenta. Un atacante con muchas IP puede probar mucho.
+- **Por eso el código tiene que ser imposible de adivinar, no «difícil»:** un DNI tiene del orden de 10^8 combinaciones (y muchos se conocen); un código de 60 bits, unos 10^18. A mil intentos por segundo, sostenidos, harían falta unos 360.000 años de media para acertar *alguno* de 100 clientes. Ningún límite de intentos es necesario para que esto se cumpla.
+- **Protección de enumeración de correos activa** (P2): el inicio de sesión no dice si una cuenta existe.
+- **Opcional, compatible con los clientes:**
+  - App Check (reCAPTCHA Enterprise, invisible) en Auth y Firestore: frena scripts fuera de la web. Primero en modo «supervisar» una semana, luego «aplicar». En iPhone funciona en Safari y en la app de inicio.
+  - Verificación en dos pasos en la cuenta de Google del entrenador (la que más vale).
+  - Mantener el alta pública abierta es necesario porque la web crea las cuentas de los clientes; desactivarla obligaría a crearlas con un script en el PC cada vez.
+
+## iPhone: comprobaciones reales (P6, F6 y F7)
 
 Con la web publicada en F3–F4 (no antes: hasta entonces no hay Auth). Cada línea, en **Safari** y en la **app de la pantalla de inicio**:
 
 1. Entrenador con Google: entra y ve sus clientes. En la app de inicio, si vuelve a la pantalla de acceso, debe salir el aviso y abrirse el respaldo (no quedarse callada).
-2. Entrenador con contraseña de respaldo (creada en F5 desde el ordenador): entra.
+2. Entrenador con contraseña de respaldo (creada en F6 desde el ordenador): entra.
 3. Cerrar la app del todo y volver a abrir: sigue dentro, sin pedir nada.
-4. Cliente de prueba con su código: entra y ve su programa y los vídeos.
+4. Cliente de prueba con su código nuevo: entra y ve su programa y los vídeos. Escribirlo en minúsculas o sin guiones también entra.
 5. Guardar una serie; cerrar la app del todo; volver a abrir: la serie está. Verla también desde el ordenador del entrenador.
 6. Modo avión: guardar una serie → aviso rojo «no están guardados». Quitar modo avión → el aviso desaparece solo y la serie está en el ordenador.
 7. «Cerrar sesión» y volver a entrar con el código: la serie sigue.

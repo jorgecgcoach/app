@@ -1,5 +1,5 @@
-// Migración de cuentas (C1) ejecutada de verdad contra los EMULADORES de Auth y Firestore,
-// con las reglas estrictas. Datos ficticios. Ejecutar con: npm run test:migracion
+// Migración de cuentas (C1) con CÓDIGOS ALEATORIOS NUEVOS, ejecutada de verdad contra los EMULADORES de Auth y
+// Firestore con las reglas estrictas. Datos ficticios. Ejecutar con: npm run test:migracion
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -7,213 +7,176 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_
   throw new Error('Solo con emuladores (npm run test:migracion).');
 }
 const PROJECT = 'demo-appjorgecgcoach';
+process.env.GCLOUD_PROJECT = PROJECT;
 const admin = require('firebase-admin');
 if (!admin.apps.length) admin.initializeApp({ projectId: PROJECT });
-const { applyMigration, planMigration } = require('./migrate-client-auth');
+const { applyMigration, comprobar, CLAIM } = require('./migrate-client-auth');
+const { verificarVinculos } = require('./verificar-vinculos');
 const ident = require('../auth/code-identity');
 const { initializeApp, deleteApp } = require('firebase/app');
 const { getAuth, connectAuthEmulator, signInWithEmailAndPassword, signOut } = require('firebase/auth');
 const { getFirestore, connectFirestoreEmulator, doc, getDoc, updateDoc, collection, query, where, getDocs, limit } = require('firebase/firestore');
 
-const FICHA = (name, extra) => Object.assign({ name, blocks: [{ id: 'b1', label: 'Bloque', cur: true, data: { program: { weeks: [{ days: [{ s: 'DÍA 1', exs: [{ uid: 'u1', n: 'Ejercicio', yt: '' }] }] }] }, log: { 'u1|1|0': { kg: 40 } } } }], pagos: [{ id: 1, importe: 50 }], _rev: 7 }, extra || {});
-const DUMP = {
-  _type: 'jcgcoach_backup',
-  meta: {
-    coachCode: 'PIN-FICTICIO',
-    codes: {
-      'COD-UNO': { client: 'c1' },
-      'COD-DOS-A': { client: 'c2' }, 'COD-DOS-B': { client: 'c2' },   // un cliente con dos códigos válidos
-      '12345678Z': { client: 'c3' },                                     // código tipo DNI
-      'ANA 3F': { client: 'c4' },                                        // clave antigua con espacio
-      'HUERFANO-1': { client: 'c-no-existe' }
-    }
-  },
-  clients: {
-    c1: FICHA('Ficticio Uno', { code: 'COD-UNO' }),
-    c2: FICHA('Ficticio Dos'),
-    c3: FICHA('Ficticio Tres'),
-    c4: FICHA('Ficticio Cuatro'),
-    c5: FICHA('Ficticio Sin Codigo')
-  }
-};
+const FICHA = (name, extra) => Object.assign({ name, blocks: [{ id: 'b1', label: 'Bloque', cur: true, data: { log: { 'u1|1|0': { kg: 40 } } } }], pagos: [{ id: 1, importe: 50 }], _rev: 7 }, extra || {});
+const db = admin.firestore();
 
-async function seed() {
+async function vaciar() {
   await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE' });
   await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, { method: 'DELETE' });
-  const db = admin.firestore();
-  for (const [id, d] of Object.entries(DUMP.clients)) await db.collection('clients').doc(id).set(d);
-  await db.collection('clients').doc('coach_data').set({ codes: DUMP.meta.codes, coachCode: 'PIN-FICTICIO' });
 }
+async function sembrar(fichas, codes) {
+  await vaciar();
+  for (const [cid, f] of Object.entries(fichas)) await db.collection('clients').doc(cid).set(f);
+  await db.collection('clients').doc('coach_data').set({ coachCode: 'PIN-FICTICIO', codes: codes || {}, _rev: 3 });
+}
+const ficha = async cid => (await db.collection('clients').doc(cid).get()).data();
+const meta = async () => (await db.collection('clients').doc('coach_data').get()).data();
 
 let n = 0;
-async function asClient(typed, fn) {
+async function comoCliente(code, fn) {
   const app = initializeApp({ apiKey: 'demo', projectId: PROJECT }, 'c' + (n++));
   const auth = getAuth(app);
   connectAuthEmulator(auth, 'http://' + process.env.FIREBASE_AUTH_EMULATOR_HOST, { disableWarnings: true });
-  const db = getFirestore(app);
+  const cdb = getFirestore(app);
   const [h, p] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
-  connectFirestoreEmulator(db, h, Number(p));
+  connectFirestoreEmulator(cdb, h, Number(p));
   try {
-    const cred = await signInWithEmailAndPassword(auth, await ident.clientEmailFromCode(typed), ident.clientPasswordFromCode(typed));
-    return await fn(db, cred.user.uid);
+    const cred = await signInWithEmailAndPassword(auth, await ident.clientEmailFromCode(code), ident.clientPasswordFromCode(code));
+    return await fn(cdb, cred.user.uid);
   } finally { try { await signOut(auth); } catch (_) {} await deleteApp(app); }
 }
-// Igual que loadClientAfterAuth en index.html.
-async function miFicha(db, uid) {
-  let q = await getDocs(query(collection(db, 'clients'), where('authUid', '==', uid), limit(1)));
-  if (q.empty) q = await getDocs(query(collection(db, 'clients'), where('authUids', 'array-contains', uid), limit(1)));
+async function miFicha(cdb, uid) {
+  let q = await getDocs(query(collection(cdb, 'clients'), where('authUid', '==', uid), limit(1)));
+  if (q.empty) q = await getDocs(query(collection(cdb, 'clients'), where('authUids', 'array-contains', uid), limit(1)));
   return q.empty ? null : q.docs[0];
 }
 
-test.before(seed);
-
-test('el plan cuenta todos los códigos y avisa de lo raro, sin datos en claro', async () => {
-  const plan = await planMigration(DUMP);
-  const creates = plan.rows.filter(r => r.action === 'create');
-  assert.equal(creates.length, 5, 'COD-UNO, COD-DOS-A, COD-DOS-B, 12345678Z, ANA 3F');
-  assert.equal(plan.withoutCode, 1);
-  const kinds = plan.warnings.map(w => w.kind).join(' | ');
-  assert.match(kinds, /varios-codigos/);
-  assert.match(kinds, /codigo-sin-ficha/);
-  assert.ok(!JSON.stringify(plan).includes('COD-UNO') && !JSON.stringify(plan).includes('PIN-FICTICIO'));
-});
-
-test('aplicar en el emulador: cada código actual entra en SU ficha', async () => {
-  const r = await applyMigration(DUMP);
+test('cada ficha recibe un código aleatorio nuevo y su cuenta; el código viejo (tipo DNI) no da acceso', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno', { code: '12345678Z' }), c2: FICHA('Ficticio Dos') }, { '12345678Z': { client: 'c1' }, 'COD-DOS': { client: 'c2' } });
+  const r = await applyMigration();
   assert.equal(r.mode, 'emulator');
-  assert.equal(r.created, 5);
-  assert.equal(r.linked, 4);
-  const casos = [['COD-UNO', 'c1'], ['cod-uno', 'c1'], ['  COD-DOS-A ', 'c2'], ['COD-DOS-B', 'c2'], ['12345678z', 'c3'], ['ANA 3F', 'c4'], ['ana3f', 'c4']];
-  for (const [typed, esperado] of casos) {
-    const id = await asClient(typed, async (db, uid) => { const d = await miFicha(db, uid); return d && d.id; });
-    assert.equal(id, esperado, `«${typed}» debe abrir ${esperado}`);
+  assert.equal(r.migradas, 2);
+  assert.deepEqual(r.revisar, []);
+  assert.deepEqual(r.errores, []);
+  const m = await meta();
+  for (const cid of ['c1', 'c2']) {
+    const f = await ficha(cid);
+    assert.equal(ident.isStrongCode(f.code), true, 'código aleatorio de 60 bits');
+    assert.deepEqual(m.codes[f.code], { client: cid });
+    assert.deepEqual(f.authUids, [f.authUid]);
+    assert.equal((await admin.auth().getUser(f.authUid)).customClaims[CLAIM], cid);
+    assert.equal(await comoCliente(f.code, async (cdb, uid) => (await miFicha(cdb, uid)).id), cid);
+    assert.equal(await comoCliente(f.code.toLowerCase().replace(/-/g, ' '), async (cdb, uid) => (await miFicha(cdb, uid)).id), cid, 'escrito en minúsculas y con espacios');
   }
+  assert.equal(m.codes['12345678Z'], undefined, 'los códigos viejos se quitan');
+  assert.equal(m.codes['COD-DOS'], undefined);
+  await assert.rejects(comoCliente('12345678Z', async () => 1), 'el DNI no tiene cuenta');
 });
 
-test('la migración solo añade authUid/authUids: el resto de la ficha queda idéntico', async () => {
-  for (const id of ['c1', 'c2', 'c3', 'c4', 'c5']) {
-    const d = (await admin.firestore().collection('clients').doc(id).get()).data();
-    const { authUid, authUids, ...resto } = d;
-    assert.deepEqual(resto, DUMP.clients[id], id);
-  }
-  const c5 = (await admin.firestore().collection('clients').doc('c5').get()).data();
-  assert.equal(c5.authUid, undefined, 'sin código no se crea cuenta');
+test('solo añade código, cuentas y sello: el resto de la ficha queda idéntico', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno') });
+  await applyMigration();
+  const { code, authUid, authUids, _rev, _updatedBy, _updatedAt, _writers, ...resto } = await ficha('c1');
+  const { _rev: r0, ...esperado } = FICHA('Ficticio Uno');
+  assert.deepEqual(resto, esperado);
+  assert.equal(_rev, 8);
+  assert.equal(_updatedBy, 'migracion-c1');
 });
 
-test('repetirla no duplica cuentas ni cambia nada', async () => {
-  const antes = (await admin.firestore().collection('clients').get()).docs.map(d => [d.id, JSON.stringify(d.data())]);
-  const r = await applyMigration(DUMP);
-  assert.equal(r.created, 0);
-  assert.equal(r.existed, 5);
-  assert.equal(r.reset, 0, 'repetirla no toca las cuentas ya vinculadas (no cierra sesiones)');
-  assert.equal(r.failed, 0);
-  const despues = (await admin.firestore().collection('clients').get()).docs.map(d => [d.id, JSON.stringify(d.data())]);
-  assert.deepEqual(despues, antes);
+test('repetirla no crea más cuentas, no cambia códigos y no cierra sesiones', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno'), c2: FICHA('Ficticio Dos') });
+  await applyMigration();
+  const antes = { c1: await ficha('c1'), c2: await ficha('c2'), meta: await meta() };
+  const cuentas0 = (await admin.auth().listUsers()).users.length;
+  const r = await applyMigration();
+  assert.equal(r.migradas, 0);
+  assert.equal(r.yaHechas, 2);
+  assert.deepEqual(r.revisar, []);
+  assert.equal((await admin.auth().listUsers()).users.length, cuentas0);
+  assert.deepEqual({ c1: await ficha('c1'), c2: await ficha('c2'), meta: await meta() }, antes);
 });
 
-test('con las reglas estrictas: cada cliente solo su ficha, y no puede cambiar sus dueños', async () => {
-  await asClient('COD-DOS-B', async (db, uid) => {
-    await assert.rejects(getDoc(doc(db, 'clients/c1')));
-    await assert.rejects(getDoc(doc(db, 'clients/coach_data')));
-    await assert.rejects(updateDoc(doc(db, 'clients/c2'), { authUids: [uid] }));
-    await assert.rejects(updateDoc(doc(db, 'clients/c2'), { authUid: uid }));
-    await updateDoc(doc(db, 'clients/c2'), { 'blocks': (await getDoc(doc(db, 'clients/c2'))).data().blocks });
-  });
+test('cuenta de OTRA persona ya vinculada a la ficha (p. ej. con las reglas abiertas): no se migra, se pide revisión y no se borra nada', async () => {
+  const intruso = await (async () => { await vaciar(); return admin.auth().createUser({ email: 'intruso-ficticio@example.com', password: 'clave-ficticia-1' }); })();
+  for (const [cid, f] of Object.entries({ c1: FICHA('Ficticio Uno', { authUids: [intruso.uid] }), c2: FICHA('Ficticio Dos', { authUid: intruso.uid }), c3: FICHA('Ficticio Tres') })) await db.collection('clients').doc(cid).set(f);
+  await db.collection('clients').doc('coach_data').set({ codes: {} });
+  const r = await applyMigration();
+  assert.deepEqual(r.revisar.map(x => x.clientId).sort(), ['c1', 'c2']);
+  assert.ok(r.revisar.every(x => x.motivo === 'ya-tiene-cuentas-no-verificadas'));
+  assert.equal(r.migradas, 1, 'las demás siguen');
+  assert.deepEqual((await ficha('c1')).authUids, [intruso.uid], 'no reasigna');
+  assert.equal((await ficha('c1')).code, undefined, 'no le da código nuevo');
+  assert.equal((await admin.auth().getUser(intruso.uid)).disabled, false, 'no toca la cuenta');
+  const rows = await comprobar(admin);
+  assert.deepEqual(rows.filter(x => x.action === 'revisar').map(x => x.clientId).sort(), ['c1', 'c2']);
+  // verificar-vinculos también lo señala.
+  const v = await verificarVinculos(admin);
+  assert.deepEqual([...new Set(v.problemas.map(p => p.ficha))].sort(), ['c1', 'c2']);
 });
 
-test('un código que no existía no entra', async () => {
-  await assert.rejects(asClient('COD-INVENTADO', async () => 1));
+test('cuenta propia de la migración pero de OTRA ficha: tampoco se acepta', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno'), c2: FICHA('Ficticio Dos') });
+  await applyMigration();
+  const uidDeC1 = (await ficha('c1')).authUid;
+  await db.collection('clients').doc('c3').set(FICHA('Ficticio Tres', { authUid: uidDeC1 }));
+  const r = await applyMigration();
+  assert.deepEqual(r.revisar.map(x => x.clientId), ['c3']);
 });
 
-// La copia puede ser de unas horas antes. Se manda lo que hay AHORA en Firestore.
-test('con una copia anterior: no resucita fichas borradas, no pisa un authUid nuevo ni vincula un código viejo', async () => {
-  const db = admin.firestore();
-  const COPIA = {
-    meta: { codes: { 'BORRADO-1': { client: 'c6' }, 'VIEJO-7': { client: 'c7' }, 'ANTES-8': { client: 'c8' } } },
-    clients: { c6: FICHA('Ficticio Seis'), c7: FICHA('Ficticio Siete', { code: 'VIEJO-7' }), c8: FICHA('Ficticio Ocho'), coach_data: { codes: {} } }
-  };
-  // Estado actual: c6 borrado después de la copia; c7 tiene hoy otro código; c8 ya tiene una cuenta nueva.
-  await db.collection('clients').doc('c7').set(FICHA('Ficticio Siete', { code: 'NUEVO-7' }));
-  await db.collection('clients').doc('c8').set(FICHA('Ficticio Ocho', { authUid: 'uid-nuevo-del-entrenador' }));
-  await db.collection('clients').doc('coach_data').set({ codes: { 'ANTES-8': { client: 'c8' } } }, { merge: true });
-  const meta0 = (await db.collection('clients').doc('coach_data').get()).data();
-  const r = await applyMigration(COPIA);
-  assert.equal(r.linked, 0);
-  assert.equal(r.missing, 1);
-  assert.equal(r.codeChanged, 1);
-  assert.equal(r.unlinked, 1);
-  assert.equal((await db.collection('clients').doc('c6').get()).exists, false, 'la ficha borrada no vuelve');
-  assert.equal((await db.collection('clients').doc('c7').get()).data().authUid, undefined, 'el código viejo no abre la ficha');
-  assert.equal((await db.collection('clients').doc('c8').get()).data().authUid, 'uid-nuevo-del-entrenador');
-  assert.deepEqual((await db.collection('clients').doc('coach_data').get()).data(), meta0, 'coach_data intacto');
-  await assert.rejects(asClient('VIEJO-7', async () => 1), 'ni siquiera se crea la cuenta del código viejo');
+test('si ya existe una cuenta para el código recién generado: revisión, sin usarla', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno') });
+  const fijo = '7K3M-Q9TB-0R1W';
+  const previa = await admin.auth().createUser({ email: await ident.clientEmailFromCode(fijo), password: 'otra-clave-ficticia' });
+  const r = await applyMigration({ generar: () => fijo });
+  assert.deepEqual(r.revisar, [{ clientId: 'c1', motivo: 'ya-existia-una-cuenta-para-el-codigo' }]);
+  assert.equal((await ficha('c1')).authUid, undefined);
+  assert.equal((await meta()).codes[fijo], undefined);
+  assert.equal((await admin.auth().getUser(previa.uid)).email, await ident.clientEmailFromCode(fijo), 'la cuenta previa no se toca');
 });
 
-test('un código quitado en coach_data después de la copia (sin campo code en la ficha) no da acceso', async () => {
-  const db = admin.firestore();
-  await db.collection('clients').doc('c9').set(FICHA('Ficticio Nueve'));
-  const r = await applyMigration({ meta: { codes: { 'QUITADO-9': { client: 'c9' } } }, clients: { c9: FICHA('Ficticio Nueve') } });
-  assert.equal(r.codeChanged, 1);
-  assert.equal(r.created, 0);
-  assert.equal((await db.collection('clients').doc('c9').get()).data().authUid, undefined);
-  await assert.rejects(asClient('QUITADO-9', async () => 1));
+test('un generador que no da códigos aleatorios fuertes se rechaza', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno') });
+  const r = await applyMigration({ generar: () => '12345678Z' });
+  assert.equal(r.migradas, 0);
+  assert.equal(r.errores.length, 1);
+  assert.equal((await ficha('c1')).authUid, undefined);
 });
 
-test('cuenta creada antes por otra persona con otra contraseña: se reasegura y solo entra el código', async () => {
-  const db = admin.firestore();
-  const email = await ident.clientEmailFromCode('PREVIO-10');
-  const intruso = await admin.auth().createUser({ email, password: 'otra-clave-ficticia' });
-  await db.collection('clients').doc('c10').set(FICHA('Ficticio Diez'));
-  await db.collection('clients').doc('coach_data').set({ codes: { 'PREVIO-10': { client: 'c10' } } }, { merge: true });
-  const antes = new Date((await admin.auth().getUser(intruso.uid)).tokensValidAfterTime || 0).getTime();
-  await new Promise(r => setTimeout(r, 1100)); // la marca de revocación va en segundos
-  const r = await applyMigration({ meta: { codes: { 'PREVIO-10': { client: 'c10' } } }, clients: { c10: FICHA('Ficticio Diez') } });
-  assert.equal(r.reset, 1);
-  assert.equal(r.linked, 1);
-  const u = await admin.auth().getUser(intruso.uid);
-  assert.ok(new Date(u.tokensValidAfterTime).getTime() > antes, 'sesiones anteriores revocadas');
-  assert.equal(await asClient('PREVIO-10', async (cdb, uid) => (await miFicha(cdb, uid)).id), 'c10');
-  const app = initializeApp({ apiKey: 'demo', projectId: PROJECT }, 'intruso');
-  const auth = getAuth(app); connectAuthEmulator(auth, 'http://' + process.env.FIREBASE_AUTH_EMULATOR_HOST, { disableWarnings: true });
-  await assert.rejects(signInWithEmailAndPassword(auth, email, 'otra-clave-ficticia'), 'la contraseña de antes ya no vale');
-  await deleteApp(app);
-});
-
-test('verificar-vinculos: detecta una cuenta ajena puesta en una ficha mientras las reglas siguen abiertas', async () => {
-  const { verificarVinculos } = require('./verificar-vinculos');
-  const db = admin.firestore();
-  const intruso = await admin.auth().createUser({ email: 'intruso-ficticio@example.com', password: 'clave-ficticia-1' });
-  const c1 = (await db.collection('clients').doc('c1').get()).data();
-  await db.collection('clients').doc('c1').update({ authUids: [c1.authUid, intruso.uid] });
-  const r = await verificarVinculos(admin);
-  const porFicha = {};
-  r.problemas.forEach(p => { (porFicha[p.ficha] = porFicha[p.ficha] || []).push(p.tipo); });
-  assert.deepEqual(porFicha.c1, ['cuenta-que-no-es-de-sus-codigos']);
-  assert.deepEqual(porFicha.c8, ['cuenta-inexistente'], 'el uid de prueba de c8 no es una cuenta real');
-  for (const ok of ['c2', 'c3', 'c4', 'c10']) assert.equal(porFicha[ok], undefined, ok + ' cuadra');
-  assert.ok(!JSON.stringify(r).includes('intruso-ficticio') && !JSON.stringify(r).includes(intruso.uid), 'no imprime correos ni uids');
-  await db.collection('clients').doc('c1').update({ authUids: admin.firestore.FieldValue.delete() });
-});
-
-test('fallo a mitad: la ficha que falla queda sin acceso, las demás siguen, y repetir lo completa sin duplicar', async () => {
-  const db = admin.firestore();
-  await db.collection('clients').doc('c11').set(FICHA('Ficticio Once'));
-  await db.collection('clients').doc('c12').set(FICHA('Ficticio Doce'));
-  await db.collection('clients').doc('coach_data').set({ codes: { 'FALLA-11': { client: 'c11' }, 'BIEN-12': { client: 'c12' } } }, { merge: true });
-  const COPIA = { meta: { codes: { 'FALLA-11': { client: 'c11' }, 'BIEN-12': { client: 'c12' } } }, clients: { c11: FICHA('Ficticio Once'), c12: FICHA('Ficticio Doce') } };
+test('fallo a mitad: la ficha que falla queda sin acceso, las demás siguen, y repetir lo completa', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno'), c2: FICHA('Ficticio Dos') });
   const auth = admin.auth();
-  const original = auth.createUser.bind(auth);
-  const malo = await ident.clientEmailFromCode('FALLA-11');
-  auth.createUser = async (p) => { if (p.email === malo) { const e = new Error('cuota'); e.code = 'auth/quota-exceeded'; throw e; } return original(p); };
+  const original = auth.setCustomUserClaims.bind(auth);
+  let veces = 0;
+  auth.setCustomUserClaims = async (uid, c) => { if (veces++ === 0) { const e = new Error('cuota'); e.code = 'auth/quota-exceeded'; throw e; } return original(uid, c); };
   let r;
-  try { r = await applyMigration(COPIA); } finally { auth.createUser = original; }
-  assert.equal(r.failed, 1);
-  assert.equal(r.linked, 1);
-  assert.equal((await db.collection('clients').doc('c11').get()).data().authUid, undefined, 'sin vínculo a medias');
-  assert.ok((await db.collection('clients').doc('c12').get()).data().authUid);
-  const r2 = await applyMigration(COPIA);
-  assert.equal(r2.failed, 0);
-  assert.equal(r2.created, 1, 'solo la que faltaba');
-  assert.equal(r2.linked, 2);
-  assert.equal(await asClient('FALLA-11', async (cdb, uid) => (await miFicha(cdb, uid)).id), 'c11');
+  try { r = await applyMigration(); } finally { auth.setCustomUserClaims = original; }
+  assert.equal(r.errores.length, 1);
+  assert.equal(r.migradas, 1);
+  const fallida = r.errores[0].clientId;
+  assert.equal((await ficha(fallida)).authUid, undefined, 'sin vínculo a medias');
+  assert.equal((await ficha(fallida)).code, undefined);
+  const r2 = await applyMigration();
+  assert.equal(r2.migradas, 1);
+  assert.equal(r2.yaHechas, 1);
+  const f = await ficha(fallida);
+  assert.equal(await comoCliente(f.code, async (cdb, uid) => (await miFicha(cdb, uid)).id), fallida);
+});
+
+test('con las reglas estrictas: cada cliente solo su ficha, y no puede cambiar sus dueños ni su código', async () => {
+  await sembrar({ c1: FICHA('Ficticio Uno'), c2: FICHA('Ficticio Dos') });
+  await applyMigration();
+  const c2 = await ficha('c2');
+  await comoCliente(c2.code, async (cdb, uid) => {
+    await assert.rejects(getDoc(doc(cdb, 'clients/c1')));
+    await assert.rejects(getDoc(doc(cdb, 'clients/coach_data')));
+    await assert.rejects(updateDoc(doc(cdb, 'clients/c2'), { authUids: [uid, 'otro'] }));
+    await assert.rejects(updateDoc(doc(cdb, 'clients/c2'), { code: 'OTRO' }));
+    await updateDoc(doc(cdb, 'clients/c2'), { blocks: (await getDoc(doc(cdb, 'clients/c2'))).data().blocks });
+  });
+  const v = await verificarVinculos(admin);
+  assert.deepEqual(v.problemas, []);
+});
+
+test('un código que no existe no entra', async () => {
+  await assert.rejects(comoCliente(ident.generateClientCode(), async () => 1));
 });

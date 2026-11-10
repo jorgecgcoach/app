@@ -15,12 +15,14 @@ test('el plan de la copia de ejemplo no revela códigos ni nombres', async funct
   const dump = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
   const plan = await planMigration(dump);
   assert.equal(plan.totalClients, 4);
-  assert.equal(plan.withCode, 3);
-  assert.equal(plan.withoutCode, 1);
+  assert.equal(plan.nuevos, 4, 'todas reciben código aleatorio nuevo; los de hoy no se migran');
+  assert.equal(plan.revisar, 0);
   assert.equal(plan.ignoredCoachSecret, true);
-  const creates = plan.rows.filter(function (r) { return r.action === 'create'; });
-  assert.equal(creates.length, 3);
-  assert.equal(creates.filter(function (r) { return r.dniLike; }).length, 1);
+  // Una ficha que ya trae cuentas vinculadas se marca para revisar, sin tocarla.
+  const otra = JSON.parse(JSON.stringify(dump));
+  otra.clients['c-ejemplo-2'].authUids = ['uid-desconocido'];
+  const p2 = await planMigration(otra);
+  assert.deepEqual(p2.rows.filter(r => r.action === 'revisar').map(r => r.clientId), ['c-ejemplo-2']);
   const text = JSON.stringify(plan) + '\n' + formatPlan(plan);
   SECRET_BITS.forEach(function (bit) {
     assert.equal(text.includes(bit), false, 'no debería aparecer: ' + bit);

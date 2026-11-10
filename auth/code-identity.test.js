@@ -45,3 +45,34 @@ test('detecta un documento de identidad sin sufijo y acepta el sufijo opcional',
   assert.equal(id.looksLikeBareDni('DEMO-1234'), false);
   assert.equal(id.looksLikeBareDni('EJEMPLO-7K'), false);
 });
+
+// Credenciales aleatorias (sustituyen a los códigos tipo documento de identidad).
+test('genera códigos aleatorios de 60 bits con formato XXXX-XXXX-XXXX y sin letras confusas', function () {
+  const vistos = new Set();
+  for (let i = 0; i < 2000; i++) {
+    const c = id.generateClientCode();
+    assert.match(c, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+    assert.equal(id.isStrongCode(c), true);
+    vistos.add(c);
+  }
+  assert.equal(vistos.size, 2000, 'sin repeticiones');
+  assert.equal(id.CODE_BITS, 60);
+  // Todos los símbolos aparecen (no hay sesgo grosero del generador).
+  const letras = new Set([...Array.from(vistos).join('').replace(/-/g, '')]);
+  assert.equal(letras.size, 32);
+});
+
+test('un código fuerte se reconoce aunque se escriba en minúsculas, con espacios o confundiendo O/0 e I/L/1', async function () {
+  const c = '7K3M-Q9TB-0R1W';
+  for (const escrito of ['7k3m-q9tb-0r1w', '7K3M Q9TB 0R1W', '7K3MQ9TB0R1W', '7K3M-Q9TB-OR1W', '7K3M-Q9TB-0RIW', '7k3m-q9tb-0rlw']) {
+    assert.equal(id.normAuthCode(escrito), c, escrito);
+    assert.equal(await id.clientEmailFromCode(escrito), await id.clientEmailFromCode(c));
+    assert.equal(id.clientPasswordFromCode(escrito), id.clientPasswordFromCode(c));
+  }
+});
+
+test('los códigos tipo documento de identidad o cortos NO son fuertes', function () {
+  for (const debil of ['00000000T', 'X0000000T', 'DEMO-1234', 'ANA-3F9K', '00000000T-7K', '7K3M-Q9TB-0R1', '7K3M-Q9TB-0R1WX', 'UUUU-UUUU-UUUU']) {
+    assert.equal(id.isStrongCode(debil), false, debil);
+  }
+});

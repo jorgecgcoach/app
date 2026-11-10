@@ -1,11 +1,28 @@
 #!/usr/bin/env node
-/* Crea las cuentas sintéticas de los clientes a partir de una copia de seguridad.
-   Por defecto solo hace dry-run: no llama a Firebase y no imprime códigos,
-   nombres, DNIs ni contraseñas.
-   No ejecutar contra producción desde un agente. El dueño lo lanza, si quiere,
-   siguiendo docs/firestore-auth.md. */
+/* Migración de clientes a cuentas de Firebase Auth con CÓDIGOS ALEATORIOS NUEVOS (C1, 11-11-2026).
+
+   Decisión del dueño: los códigos de hoy (a menudo un documento de identidad) NO se migran. Cada ficha recibe
+   un código aleatorio de 60 bits (auth/code-identity.js, generateClientCode) y una cuenta nueva para él.
+   El entrenador ve el código en la app («Código de acceso») y se lo envía a su cliente. Este script no
+   imprime códigos, nombres, correos ni uids: solo ids de ficha y conteos.
+
+   Identidades dudosas: si una ficha ya tiene cuentas vinculadas (authUid/authUids) que no son de esta
+   migración para ESA ficha, o si ya existe una cuenta para el código nuevo, la ficha NO se migra y queda
+   en «revisar». No se borra ni se reasigna ninguna cuenta automáticamente.
+
+   Cuándo: con las reglas definitivas YA desplegadas (los códigos nuevos se escriben en coach_data y en la
+   ficha; con las reglas abiertas los vería cualquiera) y con la app del entrenador cerrada.
+
+     Ensayo con una copia (sin red):  node scripts/migrate-client-auth.js --backup copia.json
+     Ensayo con lo que hay ahora (solo lee):  node scripts/migrate-client-auth.js --comprobar
+     Aplicar:  ALLOW_AUTH_MIGRATION_APPLY=yes node scripts/migrate-client-auth.js --apply
+   Contra los emuladores basta con FIRESTORE_EMULATOR_HOST y FIREBASE_AUTH_EMULATOR_HOST. */
 const fs = require('fs');
 const id = require('../auth/code-identity');
+
+const CLAIM = 'jcgCliente';        // marca de procedencia en la cuenta (solo la pone el Admin SDK)
+const MARCA = 'migracion-c1';      // _updatedBy de lo que escribe este script (como el guardado seguro)
+const WRITERS_KEEP = 12;
 
 function argValue(name) {
   const i = process.argv.indexOf(name);
@@ -13,104 +30,51 @@ function argValue(name) {
   return process.argv[i + 1] || null;
 }
 
-function collectCodes(dump) {
-  const codes = (dump.meta && dump.meta.codes) || {};
-  const clients = (dump.clients && typeof dump.clients === 'object') ? dump.clients : {};
-  const byClient = {};
-  function add(cid, raw) {
-    if (!cid) return;
-    const n = id.normAuthCode(raw);
-    if (!n) return;
-    if (!byClient[cid]) byClient[cid] = [];
-    if (byClient[cid].indexOf(n) < 0) byClient[cid].push(n);
-  }
-  Object.keys(codes).forEach(function (code) {
-    const info = codes[code];
-    add(info && info.client, code);
-  });
-  Object.keys(clients).forEach(function (cid) {
-    const c = clients[cid];
-    if (c && c.code) add(cid, c.code);
-  });
-  return { clients: clients, byClient: byClient };
+function sello(actual) {
+  const previos = (actual && Array.isArray(actual._writers)) ? actual._writers.filter(function (w) { return typeof w === 'string' && w !== MARCA; }) : [];
+  return {
+    _rev: ((actual && Number(actual._rev)) || 0) + 1,
+    _updatedAt: new Date().toISOString(),
+    _updatedBy: MARCA,
+    _writers: previos.concat(MARCA).slice(-WRITERS_KEEP)
+  };
 }
 
+function uidsDe(ficha) {
+  return [ficha && ficha.authUid].concat(ficha && Array.isArray(ficha.authUids) ? ficha.authUids : []).filter(Boolean);
+}
+
+// Ensayo a partir de una copia: no contacta con Firebase.
 async function planMigration(dump) {
   if (!dump || typeof dump !== 'object' || !dump.clients || typeof dump.clients !== 'object') {
     throw new Error('Esa copia no tiene clientes.');
   }
-  const collected = collectCodes(dump);
-  const seenEmail = new Map();
   const rows = [];
-  const warnings = [];
-  let withoutCode = 0;
-  const ids = Object.keys(collected.clients);
-  for (const cid of ids) {
-    const list = collected.byClient[cid] || [];
-    if (!list.length) {
-      withoutCode++;
-      continue;
-    }
-    // Cada código que hoy funciona tendrá su cuenta: ningún cliente deja de poder entrar.
-    if (list.length > 1) warnings.push({ clientId: cid, kind: 'varios-codigos (' + list.length + ', todos seguirán valiendo)' });
-    for (let k = 0; k < list.length; k++) {
-      const code = list[k];
-      if (code.length < 3) {
-        warnings.push({ clientId: cid, kind: 'demasiado-corto' });
-        rows.push({ clientId: cid, codeIndex: k, codeLength: code.length, dniLike: false, action: 'skip', reason: 'demasiado-corto' });
-        continue;
-      }
-      const email = await id.clientEmailFromCode(code);
-      let action = 'create';
-      let reason = '';
-      if (seenEmail.has(email) && seenEmail.get(email) !== cid) {
-        action = 'skip';
-        reason = 'codigo-duplicado';
-        warnings.push({ clientId: cid, kind: 'codigo-duplicado (lo usa también otra ficha)' });
-      } else {
-        seenEmail.set(email, cid);
-      }
-      rows.push({
-        clientId: cid,
-        codeIndex: k,
-        codeLength: code.length,
-        dniLike: id.looksLikeBareDni(code),
-        action: action,
-        reason: reason
-      });
-    }
+  for (const cid of Object.keys(dump.clients)) {
+    if (cid === 'coach_data') continue;
+    const c = dump.clients[cid] || {};
+    if (uidsDe(c).length) rows.push({ clientId: cid, action: 'revisar', reason: 'ya-tiene-cuentas' });
+    else rows.push({ clientId: cid, action: 'nuevo-codigo', reason: '' });
   }
-  Object.keys(collected.byClient).forEach(function (cid) {
-    if (!collected.clients[cid]) warnings.push({ clientId: cid, kind: 'codigo-sin-ficha' });
-  });
   return {
-    totalClients: ids.length,
-    withCode: ids.length - withoutCode,
-    withoutCode: withoutCode,
+    totalClients: rows.length,
+    nuevos: rows.filter(function (r) { return r.action === 'nuevo-codigo'; }).length,
+    revisar: rows.filter(function (r) { return r.action === 'revisar'; }).length,
     ignoredCoachSecret: !!(dump.meta && dump.meta.coachCode),
-    rows: rows,
-    warnings: warnings
+    rows: rows
   };
 }
 
 function formatPlan(plan) {
-  const createN = plan.rows.filter(function (r) { return r.action === 'create'; }).length;
-  const dniN = plan.rows.filter(function (r) { return r.dniLike && r.action === 'create'; }).length;
   const lines = [];
   lines.push('Migración de cuentas de cliente (dry-run). No se ha escrito nada.');
-  lines.push('Clientes en la copia: ' + plan.totalClients);
-  lines.push('Con código: ' + plan.withCode);
-  lines.push('Sin código (no se crea cuenta): ' + plan.withoutCode);
-  lines.push('Cuentas que se crearían: ' + createN);
-  lines.push('Códigos que parecen un documento de identidad sin sufijo: ' + dniN + '. Se pueden dejar. Un sufijo opcional (por ejemplo -7K) los hace más difíciles de probar.');
+  lines.push('Fichas de clientes: ' + plan.totalClients);
+  lines.push('Recibirán un código aleatorio nuevo y su cuenta: ' + plan.nuevos);
+  lines.push('A revisar (ya tienen cuentas vinculadas; no se tocarán): ' + plan.revisar);
+  lines.push('Los códigos de hoy no se migran: dejarán de valer cuando se publique la web con cuentas.');
   if (plan.ignoredCoachSecret) lines.push('La copia trae el código del entrenador. No se migra y no se imprime.');
   lines.push('No se imprimen códigos, nombres ni contraseñas.');
-  plan.rows.forEach(function (r) {
-    lines.push('- ' + r.clientId + ' longitud=' + r.codeLength + (r.dniLike ? ' dni-sin-sufijo' : '') + ' accion=' + r.action + (r.reason ? ' (' + r.reason + ')' : ''));
-  });
-  plan.warnings.forEach(function (w) {
-    lines.push('! ' + w.clientId + ' ' + w.kind);
-  });
+  plan.rows.forEach(function (r) { lines.push('- ' + r.clientId + ' accion=' + r.action + (r.reason ? ' (' + r.reason + ')' : '')); });
   return lines.join('\n');
 }
 
@@ -133,10 +97,9 @@ function initAdmin(mode) {
   const admin = require('firebase-admin');
   if (admin.apps.length) return admin;
   if (mode === 'emulator') {
-    admin.initializeApp({ projectId: 'demo-appjorgecgcoach' });
+    admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-appjorgecgcoach' });
     return admin;
   }
-  const projectId = 'appjorgecgcoach';
   let credential;
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     credential = admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT));
@@ -145,154 +108,135 @@ function initAdmin(mode) {
   } else {
     throw new Error('Falta la cuenta de servicio. No la guardes en el repositorio.');
   }
-  admin.initializeApp({ credential: credential, projectId: projectId });
+  admin.initializeApp({ credential: credential, projectId: 'appjorgecgcoach' });
   return admin;
 }
 
-async function applyMigration(dump) {
+// ¿Todas las cuentas vinculadas a la ficha son de esta migración para ESA ficha? (Si sí, ya está migrada.)
+async function cuentasPropias(admin, cid, uids) {
+  for (const uid of uids) {
+    let u;
+    try { u = await admin.auth().getUser(uid); } catch (e) { if (e && e.code === 'auth/user-not-found') return false; throw e; }
+    if (!u.customClaims || u.customClaims[CLAIM] !== cid) return false;
+    if ((u.providerData || []).some(function (p) { return p.providerId !== 'password'; })) return false;
+  }
+  return uids.length > 0;
+}
+
+// Estado actual (solo lee): qué fichas recibirían código nuevo y cuáles hay que revisar.
+async function comprobar(admin) {
+  const snap = await admin.firestore().collection('clients').get();
+  const rows = [];
+  for (const d of snap.docs) {
+    if (d.id === 'coach_data') continue;
+    const uids = uidsDe(d.data());
+    if (!uids.length) rows.push({ clientId: d.id, action: 'nuevo-codigo', reason: '' });
+    else if (await cuentasPropias(admin, d.id, uids)) rows.push({ clientId: d.id, action: 'hecha', reason: '' });
+    else rows.push({ clientId: d.id, action: 'revisar', reason: 'cuentas-no-verificadas' });
+  }
+  return rows;
+}
+
+async function applyMigration(opciones) {
   const mode = assertApplyAllowed();
   const admin = initAdmin(mode);
-  const collected = collectCodes(dump);
-  let created = 0;
-  let existed = 0;
-  let linked = 0;
-  let skipped = 0;
-  const seenEmail = new Map();
-  const unlinked = [];
-  let missing = 0;
-  let codeChanged = 0;
-  let failed = 0;
-  let reset = 0;
-  let odd = 0;
+  const generar = (opciones && opciones.generar) || id.generateClientCode;
   const db = admin.firestore();
   const metaRef = db.collection('clients').doc('coach_data');
-  // Códigos que valen HOY para una ficha: los de coach_data.codes que apuntan a ella y su campo code.
-  function vigentes(meta, live, cid) {
-    const set = new Set();
-    const codes = (meta && meta.codes && typeof meta.codes === 'object') ? meta.codes : {};
-    Object.keys(codes).forEach(function (k) { if (codes[k] && codes[k].client === cid) set.add(id.normAuthCode(k)); });
-    if (live && live.code) set.add(id.normAuthCode(live.code));
-    return set;
-  }
-  for (const cid of Object.keys(collected.clients)) {
-    if (cid === 'coach_data') { skipped++; continue; } // el meta del entrenador nunca lleva dueño
-    const fromBackup = (collected.byClient[cid] || []).filter(function (c) { return c.length >= 3; });
-    if (!fromBackup.length) {
-      skipped++;
-      continue;
-    }
-    const ref = db.collection('clients').doc(cid);
+  const r = { mode: mode, migradas: 0, yaHechas: 0, revisar: [], errores: [] };
+  const fichas = (await db.collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
+  for (const d of fichas) {
+    const cid = d.id;
     try {
-      // 1. Se decide con lo que hay AHORA en Firestore, no con la copia:
-      //    - ficha borrada después de la copia: no se vuelve a crear;
-      //    - solo los códigos de la copia que siguen valiendo hoy (un código cambiado o quitado no da acceso).
-      const [snap0, meta0] = await Promise.all([ref.get(), metaRef.get()]);
-      if (!snap0.exists) { skipped++; missing++; continue; }
-      const live0 = snap0.data() || {};
-      const ok0 = vigentes(meta0.exists ? meta0.data() : null, live0, cid);
-      const list = fromBackup.filter(function (c) { return ok0.has(c); });
-      if (!list.length) { skipped++; codeChanged++; continue; }
-      const linkedNow = [live0.authUid].concat(Array.isArray(live0.authUids) ? live0.authUids : []).filter(Boolean);
-      // 2. Cuentas. Repetible: si ya existe, se reutiliza.
-      const uids = [];
-      let rara = false;
-      for (const code of list) {
-        const email = await id.clientEmailFromCode(code);
-        if (seenEmail.has(email) && seenEmail.get(email) !== cid) { skipped++; continue; }
-        seenEmail.set(email, cid);
-        const password = id.clientPasswordFromCode(code);
-        let user;
-        try {
-          user = await admin.auth().createUser({ email: email, password: password });
-          created++;
-        } catch (e) {
-          if (!(e && e.code === 'auth/email-already-exists')) throw e;
-          user = await admin.auth().getUserByEmail(email);
-          existed++;
-          // Una cuenta con ese correo que no es solo de contraseña (p. ej. Google) no es de las nuestras.
-          if ((user.providerData || []).some(function (p) { return p.providerId !== 'password'; })) { rara = true; break; }
-          // Existe pero aún no está vinculada a la ficha: pudo crearla otra persona (el alta pública de
-          // Firebase está abierta) con otra contraseña. Se le pone la contraseña del código y se cierran sus
-          // sesiones. Si ya está vinculada, es la del cliente y no se toca (repetir no le cierra la sesión).
-          if (linkedNow.indexOf(user.uid) < 0) {
-            await admin.auth().updateUser(user.uid, { password: password });
-            await admin.auth().revokeRefreshTokens(user.uid);
-            reset++;
-          }
-        }
-        if (uids.indexOf(user.uid) < 0) uids.push(user.uid);
+      const uids0 = uidsDe(d.data());
+      if (uids0.length) {
+        if (await cuentasPropias(admin, cid, uids0)) r.yaHechas++;
+        else r.revisar.push({ clientId: cid, motivo: 'ya-tiene-cuentas-no-verificadas' });
+        continue;
       }
-      if (rara) { skipped++; odd++; continue; }
-      if (!uids.length) continue;
-      // 3. Vincular en una transacción que vuelve a comprobarlo todo con lo último del servidor.
+      const code = id.normAuthCode(generar());
+      if (!id.isStrongCode(code)) throw new Error('codigo-no-aleatorio');
+      const email = await id.clientEmailFromCode(code);
+      // Una cuenta que ya existe para un código recién generado no se da por buena nunca.
+      let existe = null;
+      try { existe = await admin.auth().getUserByEmail(email); } catch (e) { if (!(e && e.code === 'auth/user-not-found')) throw e; }
+      if (existe) { r.revisar.push({ clientId: cid, motivo: 'ya-existia-una-cuenta-para-el-codigo' }); continue; }
+      const user = await admin.auth().createUser({ email: email, password: id.clientPasswordFromCode(code) });
+      await admin.auth().setCustomUserClaims(user.uid, { [CLAIM]: cid });
+      // Vincular en una transacción que vuelve a comprobar la ficha y el meta con lo último del servidor.
+      const ref = db.collection('clients').doc(cid);
       const res = await db.runTransaction(async function (tx) {
         const [snap, meta] = await Promise.all([tx.get(ref), tx.get(metaRef)]);
-        if (!snap.exists) return 'missing';
+        if (!snap.exists) return 'ficha-borrada';
         const live = snap.data() || {};
-        const ok = vigentes(meta.exists ? meta.data() : null, live, cid);
-        if (!list.every(function (c) { return ok.has(c); })) return 'code-changed';
-        const liveUid = live.authUid || null;
-        if (liveUid && uids.indexOf(liveUid) < 0) return 'unlinked';
-        // Solo se añaden estos campos; el resto de la ficha no se toca.
-        const patch = { authUid: liveUid || uids[0] };
-        const all = (Array.isArray(live.authUids) ? live.authUids.slice() : []);
-        uids.forEach(function (u) { if (all.indexOf(u) < 0) all.push(u); });
-        if (all.length > 1) patch.authUids = all;
-        tx.update(ref, patch);
-        return 'linked';
+        if (uidsDe(live).length) return 'cuentas-nuevas-durante-la-migracion';
+        const m = meta.exists ? (meta.data() || {}) : {};
+        const codes = Object.assign({}, m.codes || {});
+        Object.keys(codes).forEach(function (k) { if (codes[k] && codes[k].client === cid) delete codes[k]; });
+        if (codes[code]) return 'codigo-repetido';
+        codes[code] = { client: cid };
+        tx.update(ref, Object.assign({ code: code, authUid: user.uid, authUids: [user.uid] }, sello(live)));
+        if (meta.exists) tx.update(metaRef, Object.assign({ codes: codes }, sello(m)));
+        else tx.set(metaRef, Object.assign({ codes: codes }, sello(null)));
+        return 'ok';
       });
-      if (res === 'linked') linked++;
-      else {
-        skipped++;
-        if (res === 'missing') missing++;
-        else if (res === 'code-changed') codeChanged++;
-        else unlinked.push(cid);
-      }
+      if (res === 'ok') r.migradas++;
+      // La cuenta creada queda sin vincular: no da acceso a nada. No se borra (se revisa a mano).
+      else r.revisar.push({ clientId: cid, motivo: res });
     } catch (e) {
-      // Un fallo en una ficha no para las demás ni deja nada a medias en ella: sin la transacción final,
-      // su ficha no tiene authUid y las cuentas creadas no dan acceso a nada. Repetir lo completa.
-      failed++;
-      skipped++;
-      console.error('! ' + cid + ' no se ha podido migrar (' + ((e && e.code) || 'error') + '). Se puede repetir.');
+      // Un fallo en una ficha no para las demás. Sin la transacción final, la ficha no queda vinculada.
+      r.errores.push({ clientId: cid, codigo: (e && e.code) || 'error' });
     }
   }
-  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length, missing: missing, codeChanged: codeChanged, failed: failed, reset: reset, odd: odd };
+  return r;
 }
 
 async function main() {
   const backup = argValue('--backup');
   const apply = process.argv.includes('--apply');
-  if (!backup) {
-    console.error('Uso: node scripts/migrate-client-auth.js --backup copia.json');
-    console.error('Sin --apply solo imprime el plan. No contacta con Firebase.');
+  const check = process.argv.includes('--comprobar');
+  if (!backup && !apply && !check) {
+    console.error('Uso: --backup copia.json (ensayo sin red) | --comprobar (solo lee) | --apply');
     process.exit(1);
   }
-  const dump = JSON.parse(fs.readFileSync(backup, 'utf8'));
-  const plan = await planMigration(dump);
-  console.log(formatPlan(plan));
-  if (!apply) return;
+  if (backup) {
+    const plan = await planMigration(JSON.parse(fs.readFileSync(backup, 'utf8')));
+    console.log(formatPlan(plan));
+    if (!apply && !check) return;
+  }
+  if (check && !apply) {
+    const admin = initAdmin(process.env.FIRESTORE_EMULATOR_HOST ? 'emulator' : 'production-read');
+    const rows = await comprobar(admin);
+    console.log('Estado actual (solo lectura). Código nuevo: ' + rows.filter(x => x.action === 'nuevo-codigo').length +
+      '. Ya migradas: ' + rows.filter(x => x.action === 'hecha').length + '. A revisar: ' + rows.filter(x => x.action === 'revisar').length + '.');
+    rows.filter(x => x.action === 'revisar').forEach(x => console.log('! ' + x.clientId + ' ' + x.reason));
+    return;
+  }
   try {
     assertApplyAllowed();
   } catch (e) {
     if (e && e.code === 'APPLY_BLOCKED') {
-      console.error('No se ha aplicado nada. --apply contra el proyecto real exige ALLOW_AUTH_MIGRATION_APPLY=yes y la cuenta de servicio que ya usa el aviso diario (GOOGLE_APPLICATION_CREDENTIALS o FIREBASE_SERVICE_ACCOUNT). No pongas ese JSON en el repositorio.');
+      console.error('No se ha aplicado nada. --apply contra el proyecto real exige ALLOW_AUTH_MIGRATION_APPLY=yes y una cuenta de servicio (GOOGLE_APPLICATION_CREDENTIALS o FIREBASE_SERVICE_ACCOUNT). No pongas ese JSON en el repositorio.');
       process.exit(2);
     }
     throw e;
   }
-  const result = await applyMigration(dump);
-  console.log('Aplicado (' + result.mode + '). Creadas: ' + result.created + '. Ya existían: ' + result.existed + '. Fichas con authUid: ' + result.linked + '. Omitidas: ' + result.skipped +
-    ' (ficha borrada después de la copia: ' + result.missing + '; código que ya no vale: ' + result.codeChanged + '; ya vinculada a otra cuenta: ' + result.unlinked +
-    '; cuenta con otro proveedor: ' + result.odd + '; con error: ' + result.failed + '). Cuentas previas no vinculadas que se han reasegurado: ' + result.reset + '.');
-  if (result.missing || result.codeChanged || result.unlinked || result.odd) console.log('Revisa esas fichas en la app: no se ha tocado nada en ellas. Si hace falta, guarda otra vez su código en «Código de acceso».');
-  if (result.failed) { console.error('Hubo errores: repite el mismo comando (no duplica nada).'); process.exitCode = 3; }
+  const r = await applyMigration();
+  console.log('Aplicado (' + r.mode + '). Fichas con código nuevo: ' + r.migradas + '. Ya migradas antes: ' + r.yaHechas +
+    '. A revisar: ' + r.revisar.length + '. Con error: ' + r.errores.length + '.');
+  r.revisar.forEach(function (x) { console.log('! revisar ' + x.clientId + ' (' + x.motivo + '). No se ha tocado: decide a mano.'); });
+  r.errores.forEach(function (x) { console.log('! error ' + x.clientId + ' (' + x.codigo + '). Se puede repetir el comando.'); });
+  console.log('Los códigos nuevos se ven en la app del entrenador («Código de acceso» de cada cliente). No se han impreso.');
+  if (r.revisar.length || r.errores.length) process.exitCode = 3;
 }
 
 module.exports = {
   planMigration: planMigration,
   formatPlan: formatPlan,
   assertApplyAllowed: assertApplyAllowed,
-  applyMigration: applyMigration
+  applyMigration: applyMigration,
+  comprobar: comprobar,
+  CLAIM: CLAIM
 };
 
 if (require.main === module) {

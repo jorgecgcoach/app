@@ -9,3 +9,6 @@ ui-debug.log
 *.local.json
 service-account*.json
 *-service-account.json
+# UID real del entrenador y reglas generadas con él: nunca en git (el repositorio es público).
+config/uid-entrenador.txt
+reglas-despliegue/

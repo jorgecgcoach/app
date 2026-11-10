@@ -97,7 +97,12 @@ Hazlo en este orden, el día del corte, después de revisar el PR. Hasta el paso
 })();
 ```
 
-4. **Reglas en local (1 min).** En `firestore.rules`, sustituye `REEMPLAZAR_UID_DEL_COACH` por ese UID. No despliegues todavía. El claim `role == 'coach'` es opcional y solo se puede poner con el Admin SDK; la allowlist basta.
+4. **Reglas con el UID, sin publicarlo (1 min).** El repositorio es público: el UID real **no** va a git, que lleva siempre el marcador `REEMPLAZAR_UID_DEL_COACH`.
+   - Escribe el UID en `config/uid-entrenador.txt` (una línea; ignorado por git).
+   - `npm run reglas:preparar` genera en `reglas-despliegue/` (ignorada) las tres reglas con el UID, un `firebase.json` que despliega solo reglas y `huellas.txt`.
+   - `npm run test:reglas-despliegue` pasa todas las pruebas de reglas contra esos archivos generados (comprueba también que no queda ningún marcador y que un UID casi igual no entra).
+   - Para desplegar, **solo** desde esa carpeta: `firebase deploy --only firestore:rules,storage --config reglas-despliegue/firebase.json`. Nunca desde la raíz: ahí están las reglas con el marcador y el entrenador se quedaría sin acceso.
+   - El claim `role == 'coach'` es opcional y solo se puede poner con el Admin SDK; el UID basta.
 5. **Ensayo de la migración (2 min).** Desde la raíz del repo, con Node 18 o superior:
 
 ```bash

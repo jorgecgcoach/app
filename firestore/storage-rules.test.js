@@ -17,8 +17,8 @@ test.before(async () => {
   env = await initializeTestEnvironment({
     // Las reglas de Storage consultan Firestore en el proyecto con el que arrancó el emulador.
     projectId: process.env.GCLOUD_PROJECT || 'demo-jcg-seguridad',
-    firestore: { rules: fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8') },
-    storage: { rules: fs.readFileSync(path.join(ROOT, 'storage.rules'), 'utf8') }
+    firestore: { rules: require('./reglas').leer('firestore.rules') },
+    storage: { rules: require('./reglas').leer('storage.rules') }
   });
 });
 test.after(async () => { if (env) await env.cleanup(); });

@@ -8,7 +8,7 @@ const path = require('path');
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require('@firebase/rules-unit-testing');
 const { doc, getDoc, setDoc, updateDoc, deleteField } = require('firebase/firestore');
 
-const RULES = fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8');
+const RULES = require('./reglas').leer('firestore.rules');
 const BASE = () => ({
   name: 'Cliente Ficticio A', code: 'COD-A', authUid: 'uid-a', _rev: 4, _updatedBy: 'x', _writers: ['x'],
   mods: { semana: true, programa: false }, serviceType: 'training', notifs: { seguimiento: { mode: 'auto' } },

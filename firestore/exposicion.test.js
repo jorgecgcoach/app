@@ -11,7 +11,7 @@ const { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, writeBat
 
 const RULES = {
   actual: fs.readFileSync(path.join(__dirname, 'produccion-actual.rules'), 'utf8'),
-  estricta: fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8')
+  estricta: require('./reglas').leer('firestore.rules')
 };
 
 async function seed(env) {

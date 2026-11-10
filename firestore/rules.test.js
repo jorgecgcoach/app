@@ -20,7 +20,9 @@ const {
 } = require('firebase/firestore');
 
 const PROJECT = 'demo-appjorgecgcoach';
-const ALLOWLIST_UID = 'REEMPLAZAR_UID_DEL_COACH';
+const REGLAS = require('./reglas');
+// El UID del entrenador sale de las reglas que se prueban: el marcador en el repositorio, el real en las generadas.
+const ALLOWLIST_UID = REGLAS.uidEntrenador(REGLAS.leer('firestore.rules'));
 
 let testEnv;
 
@@ -32,7 +34,7 @@ test.before(async function () {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT,
     firestore: {
-      rules: fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8')
+      rules: REGLAS.leer('firestore.rules')
     }
   });
 });

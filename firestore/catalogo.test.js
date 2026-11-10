@@ -9,8 +9,8 @@ const { doc, getDoc, setDoc, deleteDoc, collection, getDocs, updateDoc } = requi
 
 const ROOT = path.join(__dirname, '..');
 const RULES = {
-  estricta: fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8'),
-  transicion: fs.readFileSync(path.join(ROOT, 'firestore.transicion.rules'), 'utf8')
+  estricta: require('./reglas').leer('firestore.rules'),
+  transicion: require('./reglas').leer('firestore.transicion.rules')
 };
 const CAT = { items: [{ n: 'Ejercicio propio', v: 'https://youtu.be/AAAAAAAAAAA' }], count: 1, updatedAt: '2026-11-09T00:00:00.000Z' };
 

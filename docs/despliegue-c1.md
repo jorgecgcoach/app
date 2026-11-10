@@ -83,9 +83,9 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 | --- | --- | --- |
 | F1 | Copia de la app («🛟 Copia → Descargar copia ahora») justo antes. `node scripts/verificar-vinculos.js --proyecto-real` (solo lee): anotar si alguna ficha ya trae cuentas (no debería). | 3 min |
 | F2 | Cerrar la app del entrenador en **todos** los dispositivos (para que ninguno vuelva a escribir la lista de códigos antigua). | 1 min |
-| F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
+| F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true` y, con la opción C ya desplegada, `ALTAS_SERVIDOR = true`; ver `docs/altas-servidor.md`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
 | F4 | **[Autorización]** Enseguida, reglas definitivas de Firestore y Storage. Al desplegar Storage, comprobar antes la identidad exacta del agente de servicio y conceder solo el rol de P5. | 3 min |
-| F5 | **[Autorización]** Migración: `node scripts/migrate-client-auth.js --comprobar` (solo lee) y, si cuadra, `--apply --aislar` con `ALLOW_AUTH_MIGRATION_APPLY=yes` (`--aislar`: decisión D2; solo vale en la primera ejecución). **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Con `--aislar`, las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
+| F5 | **[Autorización]** Migración. 1) `node scripts/migrate-client-auth.js --comprobar` y `--simular-aislar` (las dos solo leen): el informe dice cuántas fichas y cuentas perderían el acceso, por qué, y una huella. 2) **Revisas el informe y decides.** 3) Con tu «sí», `--apply` con `ALLOW_AUTH_MIGRATION_APPLY=yes`, y solo si apruebas aislar, `--aislar --confirmar-aislar=<huella>` (decisión D2: sin la huella, o si algo cambió desde la simulación, no se aísla nada; solo vale en la primera ejecución). **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Con `--aislar`, las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
 | F6 | Entrenador: entrar con Google en el ordenador, crear la contraseña de respaldo («🛟 Copia → 🔐 Acceso de respaldo»). Abrir «Código de acceso» de cada cliente y entregarle su código nuevo. | 10 min + entregas |
 | F7 | Cliente de prueba y comprobaciones sin sesión (abajo). | 10 min |
 | F8 | Seguimiento 24–48 h: consola → Firestore → Uso, sin picos de «permiso denegado»; Authentication → Usuarios (no deben aparecer cuentas nuevas que no sean del entrenador). | — |
@@ -130,7 +130,7 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 - **Con lo de ahora, no con la copia:** lee la base de datos en el momento; una ficha borrada no se vuelve a crear; si el entrenador vincula una ficha mientras corre, no se pisa (transacción).
 - **Fallo parcial:** la ficha que falla no recibe código ni `authUid` (la cuenta suelta que pudo quedar no tiene código conocido ni ficha: no da acceso a nada); las demás siguen; basta repetirlo.
 - **Altas posteriores desde la app** (cliente nuevo o código regenerado): solo aceptan códigos generados; si la cuenta ya existiera, se rechaza y se pide otro código; la ficha queda con **solo** la cuenta nueva. Estas cuentas no llevan la marca (la web no puede ponerla): por eso la migración se ejecuta una sola vez y el control continuo es `verificar-vinculos.js`.
-- **`--aislar` (opcional, recomendado):** en las fichas con cuentas dudosas mueve `authUid`/`authUids` a `cuentasEnRevision`: esas cuentas pierden el acceso a la ficha, pero no se borran, no se desactivan y no se asignan a nadie. La ficha no se migra; queda a revisar. Solo se puede usar en la primera ejecución (después, las cuentas creadas desde la app, que no llevan la marca, parecerían dudosas).
+- **`--aislar` (opcional, recomendado):** en las fichas con cuentas dudosas mueve `authUid`/`authUids` a `cuentasEnRevision`: esas cuentas pierden el acceso a la ficha, pero no se borran, no se desactivan y no se asignan a nadie. La ficha no se migra; queda a revisar. Antes hay que ejecutar `--simular-aislar` (solo lee: fichas y cuentas afectadas, motivos, fechas, sin uids ni correos) y pasar su huella con `--confirmar-aislar`; si algo cambia entre medias, no se aplica nada. Solo se puede usar en la primera ejecución (después, las cuentas creadas desde la app, que no llevan la marca, parecerían dudosas).
 - **Nada en claro fuera de Firestore:** la salida solo lleva ids de ficha, conteos y códigos de error técnicos (nunca el mensaje del error); no escribe archivos. Probado ejecutando la consola contra los emuladores y buscando en la salida códigos, correos, uids y nombres.
 - Pruebas: `npm run test:migracion` (emuladores, 16 casos: migración y apropiación) y `shared/alta-codigo.test.js` (15 casos).
 
@@ -188,12 +188,14 @@ Hoy cualquiera puede crear una cuenta de correo y contraseña en el proyecto (lo
 | B. Cerrar el alta y dar de alta desde el PC | Ninguna alta pública. Todas las cuentas llevarían la marca y las reglas podrían exigirla: una cuenta plantada en una ficha no serviría de nada. | Cada cliente nuevo o código cambiado necesita el PC y un script. Cerrar el alta exige pasar a «Firebase Authentication con Identity Platform» (comprobar en la consola el interruptor y los límites del plan gratuito). | Script de altas, reglas por marca, la app deja de crear cuentas. |
 | C. Cerrar el alta y dar de alta con una función en el servidor | Igual que B. | Plan Blaze (tarjeta; el uso entraría en la capa gratuita). | Una función que solo acepta al entrenador. La entrada de los clientes no se ralentiza: la función solo actúa en las altas. |
 
+**Decisión (11-11-2026): opción C**, si se confirma su viabilidad. Preparada y probada en emuladores, sin desplegar: viabilidad, compatibilidad, coste y aprobaciones en [`docs/altas-servidor.md`](altas-servidor.md).
+
 ## Dónde pueden quedar códigos en claro
 
 - **Migración:** en ningún sitio fuera de Firestore (probado).
 - **Firestore** (`coach_data.codes` y `code` de cada ficha): necesario para que el entrenador pueda reenviarlos; solo los lee el entrenador (y cada cliente el suyo).
-- **«Descargar copia» de la app:** el JSON incluye todos los códigos y el PIN antiguo, **sin cifrar** (decisión D3).
-- **Copia completa del PC:** solo con `--cifrar`.
+- **«Descargar copia» de la app:** hoy incluye todos los códigos y el PIN antiguo, sin cifrar. **Decisión D3 (hecha, activa con C1):** con `AUTH_ENABLED`, la descarga habitual ya no lleva el PIN, ni la lista de códigos, ni el código de cada ficha; todo lo demás sigue (`shared/descarga-copia.test.js`). Restaurar desde la app nunca usaba PIN ni códigos, así que se restaura igual.
+- **Copia administrativa completa (con códigos):** la del PC, `copia-completa --cifrar` (AES-256-GCM; se abre con la contraseña de la llave o con el código de recuperación en papel), en el PC y en el USB. Es la que se usa si hubiera que recuperar un código o el estado completo de `coach_data`.
 - Copias antiguas: los códigos de hoy dejan de valer tras F5.
 
 ## iPhone: comprobaciones reales (P6, F6 y F7)

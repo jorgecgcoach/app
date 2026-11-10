@@ -18,13 +18,14 @@ function fuente(nombre) {
 }
 const FUNCIONES = ['normCode', 'isStrongFormat', 'codeAllowed', 'newClientCode', 'validarCodigoNuevo', 'assignClientCode',
   'clientCodeOf', 'provisionClientAuth', 'errorAlta', 'comprobarSesionEntrenador', 'cambiarCodigoConCuenta',
-  'avisoAltaCliente', 'codigoAlGuardarBloque', 'activarAccesoCliente'];
+  'avisoAltaCliente', 'codigoAlGuardarBloque', 'activarAccesoCliente', 'cargarFunciones', 'altaEnServidor'];
 const json = v => JSON.parse(JSON.stringify(v));
 
 /* Firebase de mentira. `cuentas` es el «servidor» de Auth (email → uid). */
 function contexto(o) {
   o = o || {};
   const cuentas = new Map(o.cuentas || []);
+  const llamadas = [];
   const registro = []; // orden de los efectos: la ficha debe cambiar DESPUÉS de crear la cuenta
   let n = 0;
   let ctx;
@@ -51,7 +52,17 @@ function contexto(o) {
     AUTH_ENABLED: o.auth !== false, window: { JcgAuthIdentity: ident }, console: { warn() {} },
     DATA: { codes: { 'VIEJO-1': { client: 'cli1' } }, clients: { cli1: { name: 'Ficticio', code: 'VIEJO-1', authUid: 'uid-viejo', authUids: ['uid-viejo'] }, cli2: { name: 'Otro' } } },
     _codigosGenerados: new Set(), _altaEnCurso: false,
-    firebase: { auth: authFn, app: () => ({ auth: () => secundaria, options: {} }), initializeApp: () => ({ auth: () => secundaria }) },
+    firebase: {
+      auth: authFn,
+      app: () => ({ auth: () => secundaria, options: {}, functions: region => ({ httpsCallable: nombre => async data => {
+        if (!o.funcion) throw new Error('sin función');
+        llamadas.push({ region, nombre, data: JSON.parse(JSON.stringify(data)) });
+        return o.funcion(data, cuentas);
+      } }) }),
+      initializeApp: () => ({ auth: () => secundaria })
+    },
+    ALTAS_SERVIDOR: !!o.servidor, REGION_FUNCIONES: 'europe-west1', _funcionesListas: null,
+    loadScript: async () => { if (o.sinSdkFunciones) throw new Error('red'); },
     ensureAuthReady: async () => {},
     avisos: [], guardados: [], registro,
     toast(t) { ctx.avisos.push(t); },
@@ -60,6 +71,7 @@ function contexto(o) {
   vm.createContext(ctx);
   vm.runInContext(FUNCIONES.map(fuente).join('\n'), ctx);
   ctx.cuentas = cuentas;
+  ctx.llamadas = llamadas;
   return ctx;
 }
 const fichaIntacta = c => assert.deepEqual(json(c.DATA.clients.cli1), { name: 'Ficticio', code: 'VIEJO-1', authUid: 'uid-viejo', authUids: ['uid-viejo'] });
@@ -195,4 +207,49 @@ test('entrada del cliente: un código antiguo se avisa SIN enviarlo a Firebase',
   assert.ok(chequeo < f.indexOf('clientEmailFromCode'), 'antes de derivar el correo');
   assert.ok(chequeo < f.indexOf('signInWithEmailAndPassword'), 'antes de llamar a Auth');
   assert.match(f, /han cambiado por seguridad/);
+});
+
+// Opción C: con ALTAS_SERVIDOR, la cuenta la crea la función del servidor (el registro público está cerrado).
+const errFn = code => Object.assign(new Error(code), { code: 'functions/' + code });
+
+test('altas por servidor: el navegador NO crea cuentas; llama a altaCliente y después guarda la ficha igual que antes', async () => {
+  const c = contexto({ servidor: true, funcion: async (data, cuentas) => { cuentas.set('srv:' + data.clientId, 'uid-srv'); return { data: { uid: 'uid-srv' } }; } });
+  const code = c.newClientCode();
+  assert.equal(await c.cambiarCodigoConCuenta('cli1', code), 'uid-srv');
+  assert.deepEqual(c.llamadas, [{ region: 'europe-west1', nombre: 'altaCliente', data: { clientId: 'cli1', code } }]);
+  assert.ok(!c.registro.some(x => x.startsWith('alta:')), 'sin createUserWithEmailAndPassword en el navegador');
+  assert.deepEqual(json(c.DATA.clients.cli1.authUids), ['uid-srv']);
+  assert.equal(c.DATA.clients.cli1.code, code);
+  assert.deepEqual(c.guardados, ['cli1']);
+});
+
+test('altas por servidor: cada error deja la ficha como estaba y se traduce al mismo aviso', async () => {
+  for (const [err, esperado] of [
+    ['already-exists', 'jcg/code-in-use'], ['permission-denied', 'jcg/sesion-entrenador'], ['unauthenticated', 'jcg/sesion-entrenador'],
+    ['not-found', 'jcg/ficha-borrada'], ['invalid-argument', 'jcg/codigo-no-valido'], ['unavailable', 'auth/network-request-failed'], ['internal', 'auth/network-request-failed']
+  ]) {
+    const c = contexto({ servidor: true, funcion: async () => { throw errFn(err); } });
+    await assert.rejects(c.cambiarCodigoConCuenta('cli1', c.newClientCode()), e => e.code === esperado, err);
+    fichaIntacta(c);
+    assert.deepEqual(c.guardados, []);
+  }
+  const sinSdk = contexto({ servidor: true, sinSdkFunciones: true, funcion: async () => ({ data: { uid: 'x' } }) });
+  await assert.rejects(sinSdk.cambiarCodigoConCuenta('cli1', sinSdk.newClientCode()), e => e.code === 'auth/network-request-failed');
+  fichaIntacta(sinSdk);
+});
+
+test('altas por servidor: con la sesión del entrenador caducada no se llama a la función', async () => {
+  const c = contexto({ servidor: true, tokenCaducado: true, funcion: async () => ({ data: { uid: 'x' } }) });
+  await assert.rejects(c.cambiarCodigoConCuenta('cli1', c.newClientCode()), e => e.code === 'jcg/sesion-entrenador');
+  assert.deepEqual(c.llamadas, []);
+});
+
+test('el interruptor de altas por servidor está apagado en el repositorio', () => {
+  assert.match(html, /const ALTAS_SERVIDOR=false;/);
+  assert.match(html, /firebase-functions-compat.min.js/);
+});
+
+test('la copia de code-identity de las funciones es idéntica a la de la app', () => {
+  const leer = p => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').split('\r\n').join('\n');
+  assert.equal(leer(['functions', 'code-identity.js']), leer(['auth', 'code-identity.js']), 'copiar auth/code-identity.js a functions/');
 });

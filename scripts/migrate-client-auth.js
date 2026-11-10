@@ -15,7 +15,8 @@
 
      Ensayo con una copia (sin red):  node scripts/migrate-client-auth.js --backup copia.json
      Ensayo con lo que hay ahora (solo lee):  node scripts/migrate-client-auth.js --comprobar
-     Aplicar:  ALLOW_AUTH_MIGRATION_APPLY=yes node scripts/migrate-client-auth.js --apply [--aislar]
+     Simular --aislar (solo lee):  node scripts/migrate-client-auth.js --simular-aislar
+     Aplicar:  ALLOW_AUTH_MIGRATION_APPLY=yes node scripts/migrate-client-auth.js --apply [--aislar --confirmar-aislar=<huella>]
        --aislar: las fichas con cuentas dudosas, además de quedar «a revisar», pierden el acceso de esas cuentas
        (se mueven a cuentasEnRevision; ninguna cuenta se borra, desactiva ni reasigna).
    Contra los emuladores basta con FIRESTORE_EMULATOR_HOST y FIREBASE_AUTH_EMULATOR_HOST. */
@@ -150,6 +151,88 @@ async function comprobar(admin) {
   return rows;
 }
 
+// ---------- Simulación de --aislar (solo lee) ----------
+// Huella no reversible de una cuenta para el informe: permite ver si la misma cuenta está en varias fichas sin
+// mostrar su uid.
+function huellaCuenta(uid) {
+  return require('crypto').createHash('sha256').update('jcg-cuenta|' + uid).digest('hex').slice(0, 8);
+}
+function fecha(t) { const d = t ? new Date(t) : null; return d && !isNaN(d) ? d.toISOString().slice(0, 10) : null; }
+
+async function describirCuenta(admin, cid, uid, apariciones) {
+  let u = null;
+  try { u = await admin.auth().getUser(uid); } catch (e) { if (!(e && e.code === 'auth/user-not-found')) throw e; }
+  const motivos = [];
+  const proveedores = u ? (u.providerData || []).map(function (p) { return p.providerId; }) : [];
+  if (!u) motivos.push('no-existe');
+  else {
+    const marca = u.customClaims && u.customClaims[CLAIM];
+    if (!marca) motivos.push('sin-marca');
+    else if (marca !== cid) motivos.push('marca-de-otra-ficha');
+    if (proveedores.some(function (p) { return p !== 'password'; })) motivos.push('otro-proveedor');
+    if (u.disabled) motivos.push('desactivada');
+    if (u.customClaims && u.customClaims.role === 'coach') motivos.push('es-del-entrenador');
+  }
+  if (apariciones > 1) motivos.push('en-' + apariciones + '-fichas');
+  return {
+    huella: huellaCuenta(uid), existe: !!u, proveedores: proveedores,
+    creada: u && u.metadata ? fecha(u.metadata.creationTime) : null,
+    ultimoAcceso: u && u.metadata ? fecha(u.metadata.lastSignInTime) : null,
+    motivos: motivos
+  };
+}
+
+// Qué haría --aislar AHORA, sin cambiar nada. La huella identifica exactamente el conjunto (ficha, cuenta):
+// aplicar exige pasarla, y si algo cambia entre la simulación y la aplicación, no se aplica nada.
+async function simularAislamiento(admin) {
+  const docs = (await admin.firestore().collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
+  const apariciones = new Map();
+  docs.forEach(function (d) { new Set(uidsDe(d.data())).forEach(function (u) { apariciones.set(u, (apariciones.get(u) || 0) + 1); }); });
+  const fichas = [];
+  let hayMigradas = false;
+  for (const d of docs) {
+    const data = d.data();
+    if (enRevision(data)) continue;
+    const uids = Array.from(new Set(uidsDe(data)));
+    if (!uids.length) continue;
+    if (await cuentasPropias(admin, d.id, uids)) { hayMigradas = true; continue; }
+    const cuentas = [];
+    for (const u of uids) cuentas.push(Object.assign({ uid: u }, await describirCuenta(admin, d.id, u, apariciones.get(u))));
+    fichas.push({ clientId: d.id, cuentas: cuentas });
+  }
+  const pares = [];
+  fichas.forEach(function (fi) { fi.cuentas.forEach(function (c) { pares.push(fi.clientId + ':' + c.uid); }); });
+  pares.sort();
+  const distintas = new Set(pares.map(function (p) { return p.slice(p.indexOf(':') + 1); }));
+  const huella = pares.length ? require('crypto').createHash('sha256').update('jcg-aislar|' + pares.join('|')).digest('hex').slice(0, 12) : 'ninguna';
+  // El uid no sale de aquí: el informe solo lleva huellas.
+  fichas.forEach(function (fi) { fi.cuentas.forEach(function (c) { delete c.uid; }); });
+  return { fichas: fichas, totalFichas: fichas.length, totalCuentas: distintas.size, huella: huella, permitido: !hayMigradas };
+}
+
+function formatSimulacion(sim) {
+  const l = ['Simulación de --aislar (solo lee; no se ha cambiado nada).'];
+  if (!sim.permitido) l.push('ATENCIÓN: ya hay fichas migradas. --aislar ya no se puede usar (podría quitar el acceso a cuentas buenas creadas desde la app).');
+  l.push('Fichas que perderían el acceso de sus cuentas: ' + sim.totalFichas);
+  l.push('Cuentas distintas afectadas: ' + sim.totalCuentas + ' (ninguna se borra, desactiva ni reasigna; quedan anotadas en cuentasEnRevision).');
+  sim.fichas.forEach(function (fi) {
+    l.push('- ' + fi.clientId + ': ' + fi.cuentas.length + ' cuenta(s)');
+    fi.cuentas.forEach(function (c) {
+      l.push('    · cuenta ' + c.huella + ': ' + (c.existe ? 'existe' : 'no existe') +
+        (c.proveedores.length ? ', proveedores ' + c.proveedores.join('+') : '') +
+        (c.creada ? ', creada ' + c.creada : '') + (c.ultimoAcceso ? ', último acceso ' + c.ultimoAcceso : '') +
+        '; motivos: ' + c.motivos.join(', '));
+    });
+  });
+  l.push('Huella de este conjunto: ' + sim.huella);
+  if (sim.totalFichas && sim.permitido) {
+    l.push('Para aplicarlo (solo con autorización): --apply --aislar --confirmar-aislar=' + sim.huella);
+    l.push('Si algo cambia antes de aplicarlo, la huella no coincidirá y no se aplicará nada.');
+  }
+  l.push('No se imprimen uids, correos, códigos ni nombres.');
+  return l.join(String.fromCharCode(10));
+}
+
 async function applyMigration(opciones) {
   const mode = assertApplyAllowed();
   const admin = initAdmin(mode);
@@ -160,10 +243,22 @@ async function applyMigration(opciones) {
   const r = { mode: mode, migradas: 0, yaHechas: 0, revisar: [], errores: [] };
   // --aislar solo en la PRIMERA ejecución: después, las cuentas creadas desde la app (que no llevan la marca)
   // parecerían dudosas y se les quitaría el acceso por error.
-  if (aislar && (await comprobar(admin)).some(function (x) { return x.action === 'hecha'; })) {
-    const err = new Error('--aislar solo se puede usar en la primera ejecución de la migración.');
-    err.code = 'AISLAR_SOLO_PRIMERA_VEZ';
-    throw err;
+  // Además exige la huella de una simulación previa (--simular-aislar): nunca se aísla nada sin que alguien
+  // haya visto antes exactamente qué fichas y cuentas se verían afectadas.
+  let aislables = null;
+  if (aislar) {
+    const sim = await simularAislamiento(admin);
+    if (!sim.permitido) {
+      const err = new Error('--aislar solo se puede usar en la primera ejecución de la migración.');
+      err.code = 'AISLAR_SOLO_PRIMERA_VEZ';
+      throw err;
+    }
+    if (!opciones.confirmarAislar || opciones.confirmarAislar !== sim.huella) {
+      const err = new Error('--aislar exige --confirmar-aislar con la huella de --simular-aislar, y que nada haya cambiado desde entonces. No se ha aplicado nada.');
+      err.code = 'AISLAR_SIN_CONFIRMAR';
+      throw err;
+    }
+    aislables = new Set(sim.fichas.map(function (fi) { return fi.clientId; }));
   }
   const fichas = (await db.collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
   for (const d of fichas) {
@@ -175,7 +270,7 @@ async function applyMigration(opciones) {
         if (await cuentasPropias(admin, cid, uids0)) { r.yaHechas++; continue; }
         // Identidad dudosa: no se migra. Con --aislar, además se le quita el acceso a esas cuentas moviéndolas a
         // cuentasEnRevision (no se borran, no se desactivan y no se asignan a nadie). Sin --aislar, no se toca.
-        if (aislar) {
+        if (aislar && aislables.has(cid)) {
           const ref = db.collection('clients').doc(cid);
           const hecho = await db.runTransaction(async function (tx) {
             const snap = await tx.get(ref);
@@ -239,6 +334,12 @@ async function main() {
   const backup = argValue('--backup');
   const apply = process.argv.includes('--apply');
   const check = process.argv.includes('--comprobar');
+  const simular = process.argv.includes('--simular-aislar');
+  if (simular && !apply) {
+    const admin = initAdmin(process.env.FIRESTORE_EMULATOR_HOST ? 'emulator' : 'production-read');
+    console.log(formatSimulacion(await simularAislamiento(admin)));
+    return;
+  }
   if (!backup && !apply && !check) {
     console.error('Uso: --backup copia.json (ensayo sin red) | --comprobar (solo lee) | --apply');
     process.exit(1);
@@ -265,7 +366,14 @@ async function main() {
     }
     throw e;
   }
-  const r = await applyMigration({ aislar: process.argv.includes('--aislar') });
+  const conf = process.argv.find(function (a) { return a.indexOf('--confirmar-aislar=') === 0; });
+  let r;
+  try {
+    r = await applyMigration({ aislar: process.argv.includes('--aislar'), confirmarAislar: conf ? conf.split('=')[1] : null });
+  } catch (e) {
+    if (e && (e.code === 'AISLAR_SIN_CONFIRMAR' || e.code === 'AISLAR_SOLO_PRIMERA_VEZ')) { console.error(e.message); process.exit(2); }
+    throw e;
+  }
   console.log('Aplicado (' + r.mode + '). Fichas con código nuevo: ' + r.migradas + '. Ya migradas antes: ' + r.yaHechas +
     '. A revisar: ' + r.revisar.length + (r.aisladas ? ' (sin acceso hasta revisarlas: ' + r.aisladas + ')' : '') + '. Con error: ' + r.errores.length + '.');
   r.revisar.forEach(function (x) { console.log('! revisar ' + x.clientId + ' (' + x.motivo + '). No se ha tocado: decide a mano.'); });
@@ -281,6 +389,8 @@ module.exports = {
   assertApplyAllowed: assertApplyAllowed,
   applyMigration: applyMigration,
   comprobar: comprobar,
+  simularAislamiento: simularAislamiento,
+  formatSimulacion: formatSimulacion,
   CLAIM: CLAIM
 };
 

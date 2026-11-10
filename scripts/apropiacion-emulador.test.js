@@ -14,7 +14,7 @@ const PROJECT = 'demo-appjorgecgcoach';
 process.env.GCLOUD_PROJECT = PROJECT;
 const admin = require('firebase-admin');
 if (!admin.apps.length) admin.initializeApp({ projectId: PROJECT });
-const { applyMigration } = require('./migrate-client-auth');
+const { applyMigration, simularAislamiento, formatSimulacion } = require('./migrate-client-auth');
 const { verificarVinculos } = require('./verificar-vinculos');
 const ident = require('../auth/code-identity');
 const { initializeApp, deleteApp } = require('firebase/app');
@@ -98,7 +98,15 @@ test('cuenta ajena escrita en la ficha con las reglas abiertas: sin --aislar con
     const v = await verificarVinculos(admin);
     assert.ok(v.problemas.some(p => p.ficha === 'victima'), 'verificar-vinculos lo señala');
 
-    const r2 = await applyMigration({ aislar: true });
+    // Sin simulación previa (o con otra huella) no se aísla nada.
+    await assert.rejects(applyMigration({ aislar: true }), e => e.code === 'AISLAR_SIN_CONFIRMAR');
+    await assert.rejects(applyMigration({ aislar: true, confirmarAislar: '000000000000' }), e => e.code === 'AISLAR_SIN_CONFIRMAR');
+    assert.deepEqual((await ficha('victima')).authUids, [intruso.uid], 'nada aplicado');
+    const sim = await simularAislamiento(admin);
+    assert.equal(sim.totalFichas, 1);
+    assert.equal(sim.totalCuentas, 1);
+    assert.deepEqual(sim.fichas[0].cuentas[0].motivos, ['sin-marca']);
+    const r2 = await applyMigration({ aislar: true, confirmarAislar: sim.huella });
     assert.deepEqual(r2.revisar, [{ clientId: 'victima', motivo: 'cuentas-no-verificadas-aisladas' }]);
     await noPuede(getDoc(doc(intruso.cdb, 'clients/victima')), 'aislado ya no lee');
     const f = await ficha('victima');
@@ -117,7 +125,35 @@ test('cuenta ajena escrita en la ficha con las reglas abiertas: sin --aislar con
 test('--aislar solo en la primera ejecución: luego podría quitar el acceso a cuentas buenas creadas desde la app', async () => {
   await sembrar({ c1: FICHA('Uno ficticio') });
   await applyMigration();
-  await assert.rejects(applyMigration({ aislar: true }), e => e.code === 'AISLAR_SOLO_PRIMERA_VEZ');
+  const sim = await simularAislamiento(admin);
+  assert.equal(sim.permitido, false);
+  await assert.rejects(applyMigration({ aislar: true, confirmarAislar: sim.huella }), e => e.code === 'AISLAR_SOLO_PRIMERA_VEZ');
+});
+
+test('simulación de --aislar: cuenta fichas y cuentas, explica por qué, y no muestra uids ni cambia nada', async () => {
+  await sembrar({});
+  const intruso = await intrusoConCodigo(ident.generateClientCode());
+  try {
+    await db.collection('clients').doc('c1').set(FICHA('Uno ficticio', { authUids: [intruso.uid, 'uid-inexistente-ficticio'] }));
+    await db.collection('clients').doc('c2').set(FICHA('Dos ficticio', { authUid: intruso.uid }));
+    await db.collection('clients').doc('c3').set(FICHA('Tres ficticio'));
+    const antes = JSON.stringify((await db.collection('clients').get()).docs.map(d => [d.id, d.data()]));
+    const sim = await simularAislamiento(admin);
+    assert.equal(sim.totalFichas, 2);
+    assert.equal(sim.totalCuentas, 2, 'la misma cuenta en dos fichas cuenta una vez');
+    const c1 = sim.fichas.find(x => x.clientId === 'c1');
+    assert.ok(c1.cuentas.some(c => !c.existe && c.motivos.includes('no-existe')));
+    assert.ok(c1.cuentas.some(c => c.existe && c.motivos.includes('en-2-fichas') && c.motivos.includes('sin-marca')));
+    const texto = formatSimulacion(sim);
+    assert.match(texto, /Fichas que perderían el acceso de sus cuentas: 2/);
+    assert.match(texto, /--confirmar-aislar=[0-9a-f]{12}/);
+    for (const secreto of [intruso.uid, 'uid-inexistente-ficticio', 'Uno ficticio', '@']) assert.equal(texto.includes(secreto), false);
+    assert.equal(JSON.stringify((await db.collection('clients').get()).docs.map(d => [d.id, d.data()])), antes, 'solo lee');
+    // Si algo cambia entre la simulación y la aplicación, no se aplica nada.
+    await db.collection('clients').doc('c3').update({ authUids: ['uid-plantado-despues'] });
+    await assert.rejects(applyMigration({ aislar: true, confirmarAislar: sim.huella }), e => e.code === 'AISLAR_SIN_CONFIRMAR');
+    assert.deepEqual((await ficha('c2')).authUid, intruso.uid, 'nada aplicado');
+  } finally { await intruso.cerrar(); }
 });
 
 test('conoce el código de otro cliente ya migrado: entra (el código es la llave), pero no puede quedarse con la ficha', async () => {
@@ -172,8 +208,19 @@ test('la migración por consola no muestra ni escribe códigos, correos, uids ni
   const antes = listarArchivos(ROOT, ROOT);
   const env = Object.assign({}, process.env);
   const ejecutar = args => spawnSync(process.execPath, [path.join(__dirname, 'migrate-client-auth.js'), ...args], { env, encoding: 'utf8', cwd: ROOT });
-  const salidas = [ejecutar(['--comprobar']), ejecutar(['--apply', '--aislar']), ejecutar(['--apply']), ejecutar(['--comprobar'])];
-  assert.equal(salidas[1].status, 3, 'termina con 3: hay una ficha a revisar');
+  const simulacion = ejecutar(['--simular-aislar']);
+  assert.equal(simulacion.status, 0, simulacion.stderr);
+  const huella = (simulacion.stdout.match(/Huella de este conjunto: ([0-9a-f]{12})/) || [])[1];
+  assert.ok(huella, 'la simulación da la huella');
+  const sinConfirmar = ejecutar(['--apply', '--aislar']);
+  const otraHuella = ejecutar(['--apply', '--aislar', '--confirmar-aislar=000000000000']);
+  assert.equal(sinConfirmar.status, 2);
+  assert.equal(otraHuella.status, 2);
+  assert.deepEqual((await ficha('c3')).authUids, ['uid-plantado-ficticio'], 'sin confirmar no se toca nada');
+  assert.equal((await ficha('c1')).code, undefined, 'ni se migra nada');
+  const salidas = [simulacion, sinConfirmar, otraHuella, ejecutar(['--comprobar']), ejecutar(['--apply', '--aislar', '--confirmar-aislar=' + huella]), ejecutar(['--apply']), ejecutar(['--comprobar'])];
+  assert.equal(salidas[4].status, 3, 'termina con 3: hay una ficha a revisar');
+  assert.deepEqual((await ficha('c3')).cuentasEnRevision, ['uid-plantado-ficticio']);
   const texto = salidas.map(s => s.stdout + '\n' + s.stderr).join('\n');
   const secretos = ['Nombre Ficticio', 'uid-plantado-ficticio', '@clients.appjorgecgcoach.app', 'Jcg#1'];
   for (const cid of ['c1', 'c2']) {

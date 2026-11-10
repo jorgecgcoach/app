@@ -67,13 +67,23 @@ function preparar(uid, salida) {
   return { salida, huellas };
 }
 
+// Opción C: el UID del entrenador para la función altaCliente, en functions/.env.appjorgecgcoach (ignorado por
+// git). Firebase lo carga al desplegar las funciones. Preparar no despliega nada.
+function prepararFunciones(uid, dir) {
+  dir = dir || path.join(ROOT, 'functions');
+  const archivo = path.join(dir, '.env.appjorgecgcoach');
+  fs.writeFileSync(archivo, 'COACH_UID=' + uid + '\n');
+  return archivo;
+}
+
 if (require.main === module) {
   try {
     const uid = leerUid();
     const r = preparar(uid);
     console.log('Reglas preparadas con el UID ' + abreviar(uid) + ' en ' + path.relative(ROOT, r.salida) + path.sep);
     r.huellas.forEach(function (h) { console.log('  ' + h); });
+    console.log('Configuración de las funciones (sin desplegar): ' + path.relative(ROOT, prepararFunciones(uid)));
     console.log('No se ha desplegado nada.');
   } catch (e) { console.error('No se han preparado las reglas: ' + e.message); process.exit(1); }
 }
-module.exports = { preparar, leerUid, MARCADOR, ARCHIVOS };
+module.exports = { preparar, prepararFunciones, leerUid, MARCADOR, ARCHIVOS };

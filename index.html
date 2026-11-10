@@ -2353,6 +2353,11 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
    El camino nuevo (ensureAuth, loadClientAfterAuth, loadCoachDataAfterAuth) solo corre si esto pasa a true.
    Ver docs/firestore-auth.md. No activarlo hasta el checklist con el dueño. */
 const AUTH_ENABLED=false;
+/* Opción C (altas controladas): true = las cuentas de cliente las crea la función altaCliente en el servidor
+   (registro público cerrado). false = las crea este navegador, como hasta ahora. Solo tiene efecto con
+   AUTH_ENABLED. No activarlo hasta desplegar la función (plan Blaze). Ver docs/altas-servidor.md. */
+const ALTAS_SERVIDOR=false;
+const REGION_FUNCIONES='europe-west1';
 /* true: además de negocio.contacts, copia el CRM en la colección contacts. false: solo el mapa de siempre. */
 const CONTACTS_COLLECTION=false;
 const CONTACTS_ALERT_COUNT=400;
@@ -3570,13 +3575,26 @@ async function migratePhotosToStorage(){
   alert('Listo. Fotos movidas a la nube: '+done+(fail?('\nNo se pudieron mover: '+fail+' (siguen guardadas dentro del documento; puedes reintentar).'):'')+(notSaved?('\n⚠️ '+notSaved+' cliente(s) NO se han podido guardar. Mira el aviso rojo de abajo.'):''));
 }
 /* ---- COPIA DE SEGURIDAD (exportar / importar) — red de seguridad del coach ---- */
+/* Con C1 (AUTH_ENABLED) la descarga habitual NO lleva credenciales: ni el PIN antiguo, ni la lista de códigos, ni
+   el código de cada ficha. Es un archivo sin cifrar que acaba en descargas, correos o la nube del móvil. La copia
+   administrativa completa (con códigos) es la del PC, cifrada (copia-completa --cifrar). Restaurar desde esta
+   copia nunca revive códigos, PIN ni cuentas (restauración aditiva), así que no les afecta. */
+function copiaSinCredenciales(clientes){
+  const out={};
+  Object.keys(clientes||{}).forEach(id=>{const c=clientes[id];if(c&&typeof c==='object'){const {code,...resto}=c;out[id]=resto}else out[id]=c});
+  return out;
+}
 function exportBackup(){
   // Copia COMPLETA: también plantillas y negocio (contratos, pagos, CRM), que antes se quedaban fuera.
   const N=DATA.negocio||{};const len=x=>Array.isArray(x)?x.length:0;
+  const sinCred=AUTH_ENABLED;
+  const meta={active:DATA.active,exLibrary:DATA.exLibrary,templates:DATA.templates,negocio:DATA.negocio};
+  if(!sinCred){meta.coachCode=DATA.coachCode;meta.codes=DATA.codes}
   const dump={_type:'jcgcoach_backup',_v:2,exportedAt:new Date().toISOString(),
-    meta:{active:DATA.active,coachCode:DATA.coachCode,codes:DATA.codes,exLibrary:DATA.exLibrary,templates:DATA.templates,negocio:DATA.negocio},
-    clients:DATA.clients,
-    resumen:{clientes:Object.keys(DATA.clients||{}).length,codigos:Object.keys(DATA.codes||{}).length,biblioteca:len(DATA.exLibrary),plantillas:len((DATA.templates||{}).workouts)+len((DATA.templates||{}).diets),pagos:len(N.payments),contratos:len(N.contracts),contactos:len(N.contacts)}};
+    meta,
+    clients:sinCred?copiaSinCredenciales(DATA.clients):DATA.clients,
+    resumen:{clientes:Object.keys(DATA.clients||{}).length,codigos:sinCred?0:Object.keys(DATA.codes||{}).length,biblioteca:len(DATA.exLibrary),plantillas:len((DATA.templates||{}).workouts)+len((DATA.templates||{}).diets),pagos:len(N.payments),contratos:len(N.contracts),contactos:len(N.contacts)}};
+  if(sinCred)dump._sinCredenciales=true;
   const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='copia-jorgecgcoach-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json';
@@ -8936,7 +8954,32 @@ function logoutWithAuth(){
 }
 /* Solo CREA la cuenta del código (en una segunda instancia de Auth, sin tocar la sesión del entrenador) y
    devuelve su uid. No cambia la ficha: eso lo hace cambiarCodigoConCuenta cuando la cuenta ya existe. */
-async function provisionClientAuth(code){
+/* Opción C: la cuenta la crea el servidor (solo para el entrenador; con la marca de la ficha). Los errores se
+   traducen a los mismos códigos que el alta desde el navegador, así el resto del flujo no cambia. */
+let _funcionesListas=null;
+function cargarFunciones(){
+  if(!_funcionesListas)_funcionesListas=loadScript('https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-functions-compat.min.js').catch(e=>{_funcionesListas=null;throw e});
+  return _funcionesListas;
+}
+async function altaEnServidor(code,cid){
+  try{ await cargarFunciones(); }catch(e){ throw errorAlta('auth/network-request-failed'); }
+  try{
+    const r=await firebase.app().functions(REGION_FUNCIONES).httpsCallable('altaCliente')({clientId:cid,code});
+    const uid=r&&r.data&&r.data.uid;
+    if(!uid)throw errorAlta('auth/network-request-failed');
+    return uid;
+  }catch(e){
+    const c=String((e&&e.code)||'').replace(/^functions\//,'');
+    if(c==='already-exists')throw errorAlta('jcg/code-in-use');
+    if(c==='unauthenticated'||c==='permission-denied')throw errorAlta('jcg/sesion-entrenador');
+    if(c==='not-found')throw errorAlta('jcg/ficha-borrada');
+    if(c==='invalid-argument')throw errorAlta('jcg/codigo-no-valido','⚠ Solo valen códigos generados (🎲). No se ha cambiado el código.');
+    if(e&&/^jcg\/|^auth\//.test(e.code||''))throw e;
+    throw errorAlta('auth/network-request-failed');
+  }
+}
+async function provisionClientAuth(code,cid){
+  if(ALTAS_SERVIDOR)return altaEnServidor(code,cid);
   const email=await window.JcgAuthIdentity.clientEmailFromCode(code);
   const password=window.JcgAuthIdentity.clientPasswordFromCode(code);
   const name='jcgProvision';
@@ -8983,7 +9026,7 @@ async function cambiarCodigoConCuenta(cid,raw){
   try{
     await ensureAuthReady();
     await comprobarSesionEntrenador();
-    const uid=await provisionClientAuth(code);
+    const uid=await provisionClientAuth(code,cid);
     const c=DATA.clients[cid];
     if(!c)throw errorAlta('jcg/ficha-borrada');
     DATA.codes=DATA.codes||{};

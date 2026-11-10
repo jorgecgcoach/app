@@ -159,7 +159,10 @@ async function applyMigration(dump) {
   let skipped = 0;
   const seenEmail = new Map();
   const unlinked = [];
+  let missing = 0;
+  let codeChanged = 0;
   for (const cid of Object.keys(collected.clients)) {
+    if (cid === 'coach_data') { skipped++; continue; } // el meta del entrenador nunca lleva dueño
     const list = (collected.byClient[cid] || []).filter(function (c) { return c.length >= 3; });
     if (!list.length) {
       skipped++;
@@ -189,20 +192,36 @@ async function applyMigration(dump) {
       if (uids.indexOf(user.uid) < 0) uids.push(user.uid);
     }
     if (!uids.length) continue;
-    const existingUid = collected.clients[cid] && collected.clients[cid].authUid;
-    if (existingUid && uids.indexOf(existingUid) < 0) {
-      // Ya estaba vinculada a otra cuenta (p. ej. el entrenador guardó un código nuevo con Auth): no se toca.
-      unlinked.push(cid);
+    // Se decide con la ficha ACTUAL de Firestore (no con la de la copia), dentro de una transacción:
+    // - si la ficha se borró después de la copia, no se vuelve a crear;
+    // - si el entrenador ya le dio otro código con Auth (otro authUid), no se toca;
+    // - si la ficha tiene ahora un código que no está en la copia, no se vincula a la cuenta del viejo.
+    const ref = admin.firestore().collection('clients').doc(cid);
+    const res = await admin.firestore().runTransaction(async function (tx) {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return 'missing';
+      const live = snap.data() || {};
+      const liveCode = live.code ? id.normAuthCode(live.code) : '';
+      if (liveCode && list.indexOf(liveCode) < 0) return 'code-changed';
+      const liveUid = live.authUid || null;
+      if (liveUid && uids.indexOf(liveUid) < 0) return 'unlinked';
+      // Solo se añaden estos campos; el resto de la ficha no se toca.
+      const patch = { authUid: liveUid || uids[0] };
+      const all = (Array.isArray(live.authUids) ? live.authUids.slice() : []);
+      uids.forEach(function (u) { if (all.indexOf(u) < 0) all.push(u); });
+      if (all.length > 1) patch.authUids = all;
+      tx.update(ref, patch);
+      return 'linked';
+    });
+    if (res === 'linked') linked++;
+    else {
       skipped++;
-      continue;
+      if (res === 'missing') missing++;
+      else if (res === 'code-changed') codeChanged++;
+      else unlinked.push(cid);
     }
-    // Solo se añaden estos campos; el resto de la ficha no se toca (merge).
-    const patch = { authUid: existingUid || uids[0] };
-    if (uids.length > 1) patch.authUids = uids;
-    await admin.firestore().collection('clients').doc(cid).set(patch, { merge: true });
-    linked++;
   }
-  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length };
+  return { mode: mode, created: created, existed: existed, linked: linked, skipped: skipped, unlinked: unlinked.length, missing: missing, codeChanged: codeChanged };
 }
 
 async function main() {
@@ -227,7 +246,9 @@ async function main() {
     throw e;
   }
   const result = await applyMigration(dump);
-  console.log('Aplicado (' + result.mode + '). Creadas: ' + result.created + '. Ya existían: ' + result.existed + '. Fichas con authUid: ' + result.linked + '. Omitidas: ' + result.skipped + '.');
+  console.log('Aplicado (' + result.mode + '). Creadas: ' + result.created + '. Ya existían: ' + result.existed + '. Fichas con authUid: ' + result.linked + '. Omitidas: ' + result.skipped +
+    ' (ficha borrada después de la copia: ' + result.missing + '; código cambiado después de la copia: ' + result.codeChanged + '; ya vinculada a otra cuenta: ' + result.unlinked + ').');
+  if (result.missing || result.codeChanged || result.unlinked) console.log('Revisa esas fichas en la app: no se ha tocado nada en ellas. Si hace falta, guarda otra vez su código en «Código de acceso».');
 }
 
 module.exports = {

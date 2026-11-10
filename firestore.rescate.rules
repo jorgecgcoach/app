@@ -1,0 +1,72 @@
+rules_version = '2';
+// Reglas de RESCATE (C1). NO DESPLEGAR sin autorización. Solo si, ya con firestore.rules en producción,
+// algo legítimo queda bloqueado y no se puede arreglar enseguida.
+//
+// Es la vuelta atrás SIN volver a abrir la base de datos:
+// - Hace falta iniciar sesión para TODO. Ningún visitante anónimo lee ni escribe nada.
+// - Entrenador: igual que en firestore.rules (todo).
+// - Cliente: lee y escribe SOLO su ficha (authUid/authUids), sin la lista de campos protegidos de
+//   firestore.rules (nombre, código, pagos, módulos…). Es lo único que se relaja: si una escritura
+//   legítima de la app de un cliente choca con esa lista, con estas reglas vuelve a guardar.
+//   Sigue sin poder cambiar quién es el dueño, ni crear o borrar fichas, ni leer coach_data ni otras.
+// - Catálogo y contactos: igual que en firestore.rules.
+// Volver a firestore.rules en cuanto esté arreglado.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isCoach() {
+      return signedIn() && (
+        request.auth.token.get('role', '') == 'coach'
+        || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
+      );
+    }
+
+    function coachMetaWriteOk(clientId) {
+      return clientId != 'coach_data'
+        || (!('authUid' in request.resource.data) && !('authUids' in request.resource.data));
+    }
+
+    function ownsClient() {
+      return signedIn() && (
+        resource.data.get('authUid', null) == request.auth.uid
+        || request.auth.uid in resource.data.get('authUids', [])
+      );
+    }
+
+    function ownersUnchanged() {
+      return request.resource.data.get('authUid', null) == resource.data.get('authUid', null)
+        && request.resource.data.get('authUids', []) == resource.data.get('authUids', []);
+    }
+
+    match /clients/{clientId} {
+      allow get, list: if isCoach() || ownsClient();
+      allow create: if isCoach() && coachMetaWriteOk(clientId);
+      allow update: if coachMetaWriteOk(clientId) && (
+        isCoach()
+        || (ownsClient() && ownersUnchanged())
+      );
+      allow delete: if isCoach();
+    }
+
+    match /contacts/{contactId} {
+      allow read, write: if isCoach();
+    }
+
+    match /catalog/{docId} {
+      allow get: if signedIn() && docId == 'exercises';
+      allow create, update: if isCoach() && docId == 'exercises'
+        && request.resource.data.keys().hasOnly(['items', 'count', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 3000;
+      allow delete: if isCoach();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

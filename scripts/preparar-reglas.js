@@ -4,8 +4,10 @@
 
    El UID se lee de config/uid-entrenador.txt (ignorado por git) o de --uid.
    Escribe en reglas-despliegue/ (ignorada por git):
-     firestore.rules, firestore.transicion.rules, storage.rules   con el UID en lugar del marcador
-     firebase.json        para desplegar SOLO estas reglas (firebase deploy --config reglas-despliegue/firebase.json)
+     firestore.rules, firestore.transicion.rules, firestore.rescate.rules, storage.rules   con el UID
+     firebase.json             reglas estrictas de Firestore y Storage (firebase deploy --config reglas-despliegue/firebase.json)
+     firebase.transicion.json  SOLO Firestore, reglas de transición
+     firebase.rescate.json     SOLO Firestore, reglas de rescate (vuelta atrás sin volver a abrir la base)
      huellas.txt          sha256 de cada archivo, para comprobar que lo desplegado es lo probado
    Se niega si el UID no tiene el formato de Firebase, si falta el marcador en el origen o si queda en el destino.
 
@@ -18,7 +20,7 @@ const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..');
 const MARCADOR = 'REEMPLAZAR_UID_DEL_COACH';
-const ARCHIVOS = ['firestore.rules', 'firestore.transicion.rules', 'storage.rules'];
+const ARCHIVOS = require('../firestore/reglas').ARCHIVOS_REGLAS;
 const SALIDA = path.join(ROOT, 'reglas-despliegue');
 const ARCHIVO_UID = path.join(ROOT, 'config', 'uid-entrenador.txt');
 
@@ -58,6 +60,9 @@ function preparar(uid, salida) {
     storage: { rules: 'storage.rules' }
   };
   fs.writeFileSync(path.join(salida, 'firebase.json'), JSON.stringify(config, null, 2) + '\n');
+  for (const [nombre, reglas] of [['firebase.transicion.json', 'firestore.transicion.rules'], ['firebase.rescate.json', 'firestore.rescate.rules']]) {
+    fs.writeFileSync(path.join(salida, nombre), JSON.stringify({ firestore: { rules: reglas } }, null, 2) + '\n');
+  }
   fs.writeFileSync(path.join(salida, 'huellas.txt'), huellas.join('\n') + '\n');
   return { salida, huellas };
 }

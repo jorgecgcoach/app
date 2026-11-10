@@ -3119,7 +3119,24 @@ function showSaveError(kind,cid,info){
       +'<div style="opacity:.7;font-size:.7rem;margin-top:6px">Versión de guardado: '+escapeHtml(String((window.SafeSave&&window.SafeSave.VERSION)||'anterior'))+'</div>';
     return;
   }
+  if(kind==='auth'){
+    // Sesión caducada, cuenta cambiada (p. ej. código nuevo) o reglas que ya no le dejan: no es la conexión.
+    // Lo pendiente sigue en este dispositivo (diario local) y se sube al volver a entrar con el mismo usuario.
+    b.innerHTML='⚠️ Los últimos cambios NO están guardados: tu sesión ha caducado o ya no tiene permiso. Siguen en este dispositivo. Vuelve a entrar para guardarlos.'
+      +'<br><button style="'+SAVE_BTN_CSS+'" onclick="downloadPendingChanges(\''+cid+'\')">⬇️ Descargar mis cambios</button>'
+      +'<button style="'+SAVE_BTN_CSS+'" onclick="reenterAfterAuthError()">🔑 Volver a entrar</button>';
+    return;
+  }
   b.innerHTML='⚠️ Los últimos cambios NO están guardados en la nube. Siguen en este dispositivo y se guardarán solos al volver la conexión. No cierres la app.';
+}
+// Cierra la sesión de Firebase y recarga: la pantalla de acceso pide entrar otra vez y, al entrar,
+// la recuperación del guardado seguro sube lo que quedó pendiente en este dispositivo.
+function reenterAfterAuthError(){
+  try{_loadGen++;}catch(_){}
+  stopRealtime();
+  Store.set('jcg_session',null);
+  const p=(window.firebase&&firebase.auth&&firebase.apps&&firebase.apps.length)?firebase.auth().signOut():Promise.resolve();
+  Promise.resolve(p).catch(()=>{}).then(()=>location.reload());
 }
 function hideSaveError(){const b=$("#saveBanner");if(b)b.style.display='none';}
 function handleSaveError(e){console.error('Save error:',e);const m=String((e&&(e.message||e.code))||'');showSaveError(/too large|exceeds|maximum|size|1048|invalid-argument/i.test(m)?'size':'net');}
@@ -3209,7 +3226,7 @@ const _syncProblems=new Map(); // id -> {kind, info}
 let _syncRetryT=null;
 function onSyncStatus(id,status,info){
   if(status==='saved'||status==='remote')_syncProblems.delete(id);
-  else if(status==='error'){_syncProblems.set(id,{kind:'net'});console.warn('Guardado pendiente',id,info);scheduleSyncRetry();}
+  else if(status==='error'){_syncProblems.set(id,{kind:(AUTH_ENABLED&&isPermissionError(info))?'auth':'net'});console.warn('Guardado pendiente',id,(info&&info.code)||info);scheduleSyncRetry();}
   else if(status==='size')_syncProblems.set(id,{kind:'size'});
   else if(status==='conflict'){_syncProblems.set(id,{kind:'conflict',info});console.warn('Conflicto de guardado',id,info);}
   else return;
@@ -3227,7 +3244,7 @@ function scheduleSyncRetry(){
 }
 function retryPendingSaves(){
   const sync=getSync();if(!sync)return;
-  for(const [id,p] of Array.from(_syncProblems.entries())){if(p.kind==='net'&&canWriteDoc(id))sync.save(id);}
+  for(const [id,p] of Array.from(_syncProblems.entries())){if((p.kind==='net'||p.kind==='auth')&&canWriteDoc(id))sync.save(id);}
 }
 // Tras guardar lo activo, repasa el resto: así no se queda sin subir un cambio
 // hecho a un cliente que no es el abierto.
@@ -8613,15 +8630,32 @@ function ensureAuthReady(){
     await loadScript('auth/code-identity.js');
     if(!firebase.auth) throw new Error('auth-sdk');
     await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    _authLoaded=true;
   })().catch(e=>{ _authReady=null; throw e; });
   return _authReady;
 }
+let _authLoaded=false;
+// Solo la app instalada en la pantalla de inicio usa redirección. En Safari normal (también en iPhone)
+// la ventana emergente es lo fiable: desde Safari 16.1 la redirección a otro dominio
+// (firebaseapp.com → github.io) pierde el resultado por la protección de almacenamiento de terceros.
 function preferGoogleRedirect(){
   try{
     const standalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone;
-    const ios=/iPad|iPhone|iPod/.test(navigator.userAgent||'');
-    return !!(standalone||ios);
+    return !!standalone;
   }catch(_){ return false; }
+}
+// Si una redirección a Google vuelve sin sesión (típico de la app instalada en iPhone), se dice qué hacer
+// en vez de volver en silencio a la pantalla de acceso.
+const G_REDIRECT_KEY='jcg_google_redirect';
+function markGoogleRedirect(){try{sessionStorage.setItem(G_REDIRECT_KEY,String(Date.now()));}catch(_){}}
+function takeGoogleRedirectMark(){
+  try{const t=Number(sessionStorage.getItem(G_REDIRECT_KEY)||0);sessionStorage.removeItem(G_REDIRECT_KEY);return t>0&&Date.now()-t<15*60*1000;}
+  catch(_){return false;}
+}
+function showGoogleRedirectFailed(){
+  showCoachLogin();
+  const d=document.getElementById('coachPwdBlock'); if(d) d.open=true;
+  toast('Google no ha podido completar el acceso en este dispositivo. Entra con tu correo y la contraseña de respaldo.','bad');
 }
 function isPermissionError(e){
   const c=(e&&e.code)||'';
@@ -8631,14 +8665,18 @@ function isPermissionError(e){
 async function ensureAuth(){
   await ensureAuthReady();
   const auth=firebase.auth();
+  const veniaDeGoogle=takeGoogleRedirectMark();
   try{
     const result=await auth.getRedirectResult();
     if(result&&result.user) return result.user;
   }catch(e){ console.warn('[auth] redirect', e&&e.code); }
-  return await new Promise(resolve=>{
+  const u=await new Promise(resolve=>{
     const unsub=auth.onAuthStateChanged(u=>{ unsub(); resolve(u||null); });
   });
+  if(!u&&veniaDeGoogle) _googleRedirectFailed=true;
+  return u;
 }
+let _googleRedirectFailed=false;
 async function loadCoachDataAfterAuth(user){
   SESSION={role:'coach', authUid:user.uid};
   Store.set('jcg_session', {role:'coach', authUid:user.uid});
@@ -8706,6 +8744,7 @@ async function initAppWithAuth(){
     if(!user){
       DATA=freshData(); DATA.clients={};
       renderGate(); hideBoot();
+      if(_googleRedirectFailed){ _googleRedirectFailed=false; showGoogleRedirectFailed(); }
       return;
     }
     await continueFromAuthUser(user);
@@ -8770,18 +8809,21 @@ async function submitCoachWithAuth(btn){
   setBtnLoading(btn,true,'Entrando…');
   const t0=performance.now();
   try{
-    await ensureAuthReady();
+    // Safari solo deja abrir la ventana de Google si se abre en el mismo toque: si el SDK ya está
+    // cargado (se precarga al mostrar este panel) no se espera nada antes de abrirla.
+    if(!_authLoaded) await ensureAuthReady();
     const provider=new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({prompt:'select_account'});
     const auth=firebase.auth();
     if(preferGoogleRedirect()){
+      markGoogleRedirect();
       await auth.signInWithRedirect(provider);
       return;
     }
     let cred;
     try{ cred=await auth.signInWithPopup(provider); }
     catch(e){
-      if(e&&e.code==='auth/popup-blocked'){ await auth.signInWithRedirect(provider); return; }
+      if(e&&e.code==='auth/popup-blocked'){ markGoogleRedirect(); await auth.signInWithRedirect(provider); return; }
       if(e&&(e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request')){ setBtnLoading(btn,false); return; }
       throw e;
     }
@@ -8962,7 +9004,7 @@ function renderGate(){
  g.classList.remove("closing");
  g.classList.add("open");
 }
-function showCoachLogin(){$("#clientLogin").style.display='none';$("#coachLogin").style.display='block';const i=$("#coachCodeIn");i.value="";if(AUTH_ENABLED){const pin=$("#coachPinBlock");const g=$("#coachGoogleBlock");if(pin)pin.style.display='none';if(g)g.style.display='block';}setTimeout(()=>i.focus(),50)}
+function showCoachLogin(){$("#clientLogin").style.display='none';$("#coachLogin").style.display='block';const i=$("#coachCodeIn");i.value="";if(AUTH_ENABLED){const pin=$("#coachPinBlock");const g=$("#coachGoogleBlock");if(pin)pin.style.display='none';if(g)g.style.display='block';ensureAuthReady().catch(()=>{});}setTimeout(()=>i.focus(),50)}
 function showClientLogin(){$("#coachLogin").style.display='none';$("#clientLogin").style.display='block'}
 /* Muestra/oculta el estado "cargando" en un botón (spinner + deshabilitado), evitando doble pulsación. */
 function setBtnLoading(btn,on,txt){

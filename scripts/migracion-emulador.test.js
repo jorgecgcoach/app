@@ -122,3 +122,26 @@ test('con las reglas estrictas: cada cliente solo su ficha, y no puede cambiar s
 test('un código que no existía no entra', async () => {
   await assert.rejects(asClient('COD-INVENTADO', async () => 1));
 });
+
+// La copia puede ser de unas horas antes. Se manda lo que hay AHORA en Firestore.
+test('con una copia anterior: no resucita fichas borradas, no pisa un authUid nuevo ni vincula un código viejo', async () => {
+  const db = admin.firestore();
+  const COPIA = {
+    meta: { codes: { 'BORRADO-1': { client: 'c6' }, 'VIEJO-7': { client: 'c7' }, 'ANTES-8': { client: 'c8' } } },
+    clients: { c6: FICHA('Ficticio Seis'), c7: FICHA('Ficticio Siete', { code: 'VIEJO-7' }), c8: FICHA('Ficticio Ocho'), coach_data: { codes: {} } }
+  };
+  // Estado actual: c6 borrado después de la copia; c7 tiene hoy otro código; c8 ya tiene una cuenta nueva.
+  await db.collection('clients').doc('c7').set(FICHA('Ficticio Siete', { code: 'NUEVO-7' }));
+  await db.collection('clients').doc('c8').set(FICHA('Ficticio Ocho', { authUid: 'uid-nuevo-del-entrenador' }));
+  const meta0 = (await db.collection('clients').doc('coach_data').get()).data();
+  const r = await applyMigration(COPIA);
+  assert.equal(r.linked, 0);
+  assert.equal(r.missing, 1);
+  assert.equal(r.codeChanged, 1);
+  assert.equal(r.unlinked, 1);
+  assert.equal((await db.collection('clients').doc('c6').get()).exists, false, 'la ficha borrada no vuelve');
+  assert.equal((await db.collection('clients').doc('c7').get()).data().authUid, undefined, 'el código viejo no abre la ficha');
+  assert.equal((await db.collection('clients').doc('c8').get()).data().authUid, 'uid-nuevo-del-entrenador');
+  assert.deepEqual((await db.collection('clients').doc('coach_data').get()).data(), meta0, 'coach_data intacto');
+  assert.equal(await asClient('VIEJO-7', async (cdb, uid) => miFicha(cdb, uid)), null);
+});

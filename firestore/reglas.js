@@ -8,6 +8,8 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const MARCADOR = 'REEMPLAZAR_UID_DEL_COACH';
+// Todas las reglas que llevan el UID del entrenador (las que genera scripts/preparar-reglas.js).
+const ARCHIVOS_REGLAS = ['firestore.rules', 'firestore.transicion.rules', 'firestore.rescate.rules', 'storage.rules'];
 
 function dir() { return process.env.REGLAS_DIR || ROOT; }
 function leer(nombre) { return fs.readFileSync(path.join(dir(), nombre), 'utf8'); }
@@ -18,4 +20,4 @@ function uidEntrenador(texto) {
   if (m.length !== 1) throw new Error('Se esperaba un único UID de entrenador en las reglas y hay ' + m.length);
   return m[0].replace(/^request\.auth\.uid == '|'$/g, '');
 }
-module.exports = { leer, generadas, uidEntrenador, MARCADOR, ROOT };
+module.exports = { leer, generadas, uidEntrenador, MARCADOR, ROOT, ARCHIVOS_REGLAS };

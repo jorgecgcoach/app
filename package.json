@@ -8,7 +8,7 @@
     "reglas:preparar": "node scripts/preparar-reglas.js",
     "test:reglas-despliegue": "node scripts/probar-reglas-despliegue.js",
     "test:guardado": "node --test shared/safe-save.test.js",
-    "test:seguridad": "firebase emulators:exec --only firestore,storage --project demo-jcg-seguridad --config firebase.seguridad.json \"node --test --test-concurrency=1 firestore/uid-entrenador.test.js firestore/exposicion.test.js firestore/catalogo.test.js firestore/storage-rules.test.js firestore/rules.test.js firestore/campos-cliente.test.js firestore/safe-save-rules.test.js\"",
+    "test:seguridad": "firebase emulators:exec --only firestore,storage --project demo-jcg-seguridad --config firebase.seguridad.json \"node --test --test-concurrency=1 firestore/uid-entrenador.test.js firestore/exposicion.test.js firestore/catalogo.test.js firestore/storage-rules.test.js firestore/rules.test.js firestore/campos-cliente.test.js firestore/safe-save-rules.test.js firestore/rescate.test.js\"",
     "test:migracion": "firebase emulators:exec --only firestore,auth --project demo-appjorgecgcoach --config firebase.seguridad.json \"node --test scripts/migracion-emulador.test.js\"",
     "test:unidad": "node --test shared/safe-save.test.js shared/client-catalog.test.js auth/code-identity.test.js scripts/migrate-client-auth.test.js negocio-avisos.test.js shared/negocio-alert-rules.test.js shared/job-report.test.js notify/notify.test.js shared/registro-logv.test.js shared/alta-codigo.test.js",
     "e2e:emulador": "cd e2e && firebase emulators:start --only firestore --project demo-jcg-e2e --config firebase.e2e.json",

@@ -122,22 +122,11 @@ node scripts/migrate-client-auth.js --backup ruta/de/la-copia.json --apply
 Sin `ALLOW_AUTH_MIGRATION_APPLY=yes` el script sale y no escribe en el proyecto real. Contra los emuladores solo escribe si `FIRESTORE_EMULATOR_HOST` y `FIREBASE_AUTH_EMULATOR_HOST` están definidos. Borra el JSON del disco cuando acabes. El campo `authUid` se añade a cada ficha; el resto no se toca. La web vieja lo ignora.
 7. **Corte, el mismo rato (3 min).** Primero la web nueva, enseguida las reglas. Si despliegas las reglas antes, la web actual deja de cargar porque lee `coach_data` sin Auth.
    - Cambia `const AUTH_ENABLED=false` a `true`, publica `main` (GitHub Pages).
-   - Enseguida: `npx firebase deploy --only firestore:rules --project appjorgecgcoach`
+   - Enseguida, desde las reglas generadas (nunca desde la raíz): `npx firebase deploy --only firestore:rules,storage --project appjorgecgcoach --config reglas-despliegue/firebase.json`
    - Entra tú con Google. Un cliente de prueba entra con su código de siempre. Comprueba que no ve el negocio ni otra ficha.
    - Deja `CONTACTS_COLLECTION` en false salvo que ya quieras la copia del CRM.
 
-Si algo falla, vuelve a publicar las reglas abiertas (es el estado de hoy) y pon otra vez `AUTH_ENABLED` en false:
-
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /clients/{clientId} {
-      allow read, write: if true;
-    }
-  }
-}
-```
+Si algo falla, **no** se vuelven a publicar reglas abiertas. El procedimiento completo, con la ventana y la vuelta atrás que mantiene la base cerrada (`firestore.rescate.rules`, reactivar cuentas, contraseña de respaldo), está en [`docs/despliegue-c1.md`](despliegue-c1.md), que sustituye a este paso 7.
 
 Los avisos de GitHub Actions usan la cuenta de servicio y no pasan por estas reglas. Siguen igual.
 

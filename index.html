@@ -7917,7 +7917,7 @@ function saveBlock(){
  const bid="b"+Date.now();
  DATA.clients[cid].blocks.unshift({id:bid,label,cur:true,data:nd});
  const codeRaw=normCode($("#addCode").value);
- if(codeRaw&&codeRaw!==clientCodeOf(cid))assignClientCode(cid,codeRaw);
+ codigoAlGuardarBloque(cid,codeRaw);
  DATA.active={c:cid,b:bid};UI.home=false;save();closeAdd();reset();toast(copied?"Bloque añadido · semana 1 copiada con los pesos de la última semana":"Bloque añadido");
 }
 
@@ -8904,6 +8904,27 @@ async function provisionClientAuth(cid, code){
     if(Array.isArray(DATA.clients[cid].authUids)) DATA.clients[cid].authUids=[uid];
   }
   return uid;
+}
+/* El código puesto en «Nuevo cliente» o «Añadir bloque» también crea la cuenta de acceso cuando Auth está
+   activo. Antes solo lo hacía la ventana «Código de acceso», y un cliente recién creado no podía entrar. */
+function codigoAlGuardarBloque(cid,codeRaw){
+  if(!codeRaw||codeRaw===clientCodeOf(cid))return null;
+  if(!assignClientCode(cid,codeRaw))return null;
+  if(!AUTH_ENABLED)return null;
+  return activarAccesoCliente(cid,codeRaw);
+}
+async function activarAccesoCliente(cid,code){
+  try{
+    await ensureAuthReady();
+    await provisionClientAuth(cid,code);
+    save(cid);
+    toast('Acceso del cliente activado');
+    return true;
+  }catch(e){
+    console.warn('[auth] alta cliente', (e&&e.code)||'error');
+    toast('⚠ El código quedó guardado, pero no se pudo crear la cuenta del cliente. Abre «Código de acceso» y vuelve a guardarlo.');
+    return false;
+  }
 }
 async function saveCodeModalWithAuth(){
   if(!CODE_CID)return;

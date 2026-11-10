@@ -85,7 +85,7 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 | F2 | Cerrar la app del entrenador en **todos** los dispositivos (para que ninguno vuelva a escribir la lista de códigos antigua). | 1 min |
 | F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
 | F4 | **[Autorización]** Enseguida, reglas definitivas de Firestore y Storage. Al desplegar Storage, comprobar antes la identidad exacta del agente de servicio y conceder solo el rol de P5. | 3 min |
-| F5 | **[Autorización]** Migración: `node scripts/migrate-client-auth.js --comprobar` (solo lee) y, si cuadra, `--apply` con `ALLOW_AUTH_MIGRATION_APPLY=yes`. **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
+| F5 | **[Autorización]** Migración: `node scripts/migrate-client-auth.js --comprobar` (solo lee) y, si cuadra, `--apply --aislar` con `ALLOW_AUTH_MIGRATION_APPLY=yes` (`--aislar`: decisión D2; solo vale en la primera ejecución). **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Con `--aislar`, las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
 | F6 | Entrenador: entrar con Google en el ordenador, crear la contraseña de respaldo («🛟 Copia → 🔐 Acceso de respaldo»). Abrir «Código de acceso» de cada cliente y entregarle su código nuevo. | 10 min + entregas |
 | F7 | Cliente de prueba y comprobaciones sin sesión (abajo). | 10 min |
 | F8 | Seguimiento 24–48 h: consola → Firestore → Uso, sin picos de «permiso denegado»; Authentication → Usuarios (no deben aparecer cuentas nuevas que no sean del entrenador). | — |
@@ -104,7 +104,7 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 | La app de los clientes estropea datos (p. ej. vacía series). | Desplegar `firestore.congelado.rules`. Los clientes siguen viendo su programa; lo que guarden se queda en su dispositivo. Arreglar la web, publicarla y volver a las definitivas. | 2 min |
 | Un cliente no puede guardar algo legítimo («permiso denegado»). | Si es uno: «Volver a entrar» en su aviso. Si son muchos: parada (fila anterior) mientras se arregla la app; **no** relajar los campos del entrenador. | 2 min |
 | Un cliente no puede entrar con su código. | Comprobar que usa el código **nuevo**. Si no: entrenador → «Código de acceso» → 🎲 generar otro y guardar (crea su cuenta y quita las anteriores). | 1 min |
-| Una ficha sale «a revisar». | No tocarla con prisa: se queda sin acceso de cliente, sin borrar nada. Mirar en Authentication qué cuentas tiene; si no son claramente de ese cliente, el entrenador le genera un código nuevo (eso deja **solo** la cuenta nueva en la ficha). Las cuentas ajenas se pueden desactivar a mano después. | 5 min |
+| Una ficha sale «a revisar». | No tocarla con prisa. Con `--aislar` ya no tiene acceso de cliente (las cuentas dudosas quedan anotadas en `cuentasEnRevision`); sin él, **la cuenta dudosa sigue entrando** hasta que el entrenador le dé código nuevo. No se borra nada. Mirar en Authentication qué cuentas tiene; si no son claramente de ese cliente, el entrenador le genera un código nuevo (eso deja **solo** la cuenta nueva en la ficha). Las cuentas ajenas se pueden desactivar a mano después. | 5 min |
 | Google no entra en el iPhone. | Contraseña de respaldo (F6). La app la propone sola si Google vuelve sin sesión. | 1 min |
 | El entrenador no puede entrar de ninguna forma. | Desde el ordenador con Google. Los clientes siguen funcionando; los datos siguen protegidos. | — |
 | Fallo de pantallas o botones de la web nueva. | Arreglo en `main`, o volver a publicar la «última web buena con Auth». | 10 min |
@@ -130,7 +130,9 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 - **Con lo de ahora, no con la copia:** lee la base de datos en el momento; una ficha borrada no se vuelve a crear; si el entrenador vincula una ficha mientras corre, no se pisa (transacción).
 - **Fallo parcial:** la ficha que falla no recibe código ni `authUid` (la cuenta suelta que pudo quedar no tiene código conocido ni ficha: no da acceso a nada); las demás siguen; basta repetirlo.
 - **Altas posteriores desde la app** (cliente nuevo o código regenerado): solo aceptan códigos generados; si la cuenta ya existiera, se rechaza y se pide otro código; la ficha queda con **solo** la cuenta nueva. Estas cuentas no llevan la marca (la web no puede ponerla): por eso la migración se ejecuta una sola vez y el control continuo es `verificar-vinculos.js`.
-- Pruebas: `npm run test:migracion` (emulador, 10 casos) y `shared/alta-codigo.test.js`.
+- **`--aislar` (opcional, recomendado):** en las fichas con cuentas dudosas mueve `authUid`/`authUids` a `cuentasEnRevision`: esas cuentas pierden el acceso a la ficha, pero no se borran, no se desactivan y no se asignan a nadie. La ficha no se migra; queda a revisar. Solo se puede usar en la primera ejecución (después, las cuentas creadas desde la app, que no llevan la marca, parecerían dudosas).
+- **Nada en claro fuera de Firestore:** la salida solo lleva ids de ficha, conteos y códigos de error técnicos (nunca el mensaje del error); no escribe archivos. Probado ejecutando la consola contra los emuladores y buscando en la salida códigos, correos, uids y nombres.
+- Pruebas: `npm run test:migracion` (emuladores, 16 casos: migración y apropiación) y `shared/alta-codigo.test.js` (15 casos).
 
 ## Adivinar códigos: límites y protecciones
 
@@ -140,7 +142,59 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 - **Opcional, compatible con los clientes:**
   - App Check (reCAPTCHA Enterprise, invisible) en Auth y Firestore: frena scripts fuera de la web. Primero en modo «supervisar» una semana, luego «aplicar». En iPhone funciona en Safari y en la app de inicio.
   - Verificación en dos pasos en la cuenta de Google del entrenador (la que más vale).
-  - Mantener el alta pública abierta es necesario porque la web crea las cuentas de los clientes; desactivarla obligaría a crearlas con un script en el PC cada vez.
+  - Sobre el alta pública: ver «Registro público de cuentas» más abajo (decisión D1).
+- **Entropía comprobada** (`auth/code-identity.test.js`): generador criptográfico (nunca el aleatorio normal de JavaScript; sin él no se genera nada); cada byte se recorta a 5 bits y 256 es múltiplo de 32, así que no hay sesgo (prueba chi-cuadrado por posición con 64.000 códigos); sin colisiones en 200.000 (probabilidad teórica ~2·10⁻⁸).
+- **La normalización no resta seguridad:** solo se reinterpretan O→0 e I/L→1, y O, I, L y U no están en el alfabeto, así que nunca se juntan dos códigos válidos; el espacio sigue siendo 32¹². Un código incompleto o con un símbolo de más no se completa ni se recorta.
+- **Solo códigos generados, de verdad:** la app ya no acepta un texto de 12 símbolos tecleado a mano aunque tenga el formato (tendría el formato, no la entropía). Solo vale un código generado con 🎲 en ese dispositivo, una vez, y los campos de código son de solo lectura con Auth.
+- **El correo de la cuenta es un hash rápido del código** (SHA-256). Solo serviría para adivinar códigos fuera de línea a quien tuviera la lista de usuarios de Authentication, y quien la tiene (un administrador del proyecto) ya puede leer los códigos en Firestore. No se cambia.
+
+## Altas desde el navegador del entrenador
+
+Orden seguro, probado en `shared/alta-codigo.test.js` con las funciones reales de la app:
+
+1. Se valida el código: generado en este dispositivo, sin usar y sin dueño.
+2. Se comprueba contra el servidor que la sesión del entrenador sigue viva. Si caducó, no se crea nada: «Vuelve a entrar y repítelo».
+3. Se crea la cuenta en una segunda instancia de Auth (la sesión del entrenador no cambia). Si ya existía —otra persona conocía el código y se adelantó, o una respuesta perdida de un intento anterior— **no se usa**: hay que generar otro código.
+4. Solo entonces, y en el mismo guardado, se cambian el código y las cuentas de la ficha (queda **solo** la cuenta nueva).
+
+Si algo falla antes del paso 4 (red, cuenta existente, sesión caducada, ficha borrada mientras tanto), la ficha queda como estaba y el código anterior sigue funcionando. Un solo alta a la vez (la doble pulsación se rechaza). Si falla el guardado del paso 4, el guardado seguro lo reintenta y, si la sesión caducó, lo sube tras «Volver a entrar». La cuenta suelta que pueda quedar no tiene ficha ni un código entregado: no da acceso a nada.
+
+## Reducir el tiempo sin acceso (F4–F6) y recuperar clientes
+
+**Cuánto dura:** desde que Pages publica la web nueva (F3) hasta que el cliente recibe su código. F3→F5 son 10–15 minutos si se hacen seguidos; lo que más tarda es la entrega (F6).
+
+Antes de la noche:
+
+- Avisar a los clientes 2–3 días antes (fecha y hora, y que recibirán un código nuevo por el canal habitual). Lo que registren esa noche sin conexión se queda en su móvil y se sube al entrar con el código nuevo.
+- Elegir una hora sin entrenamientos y tener preparada la plantilla del mensaje.
+- P1 (copia real cifrada y verificada) y los ensayos P3–P4 hechos: así F4 y F5 son dos comandos ya probados. Credenciales para F5 preparadas en el PC (fuera del repositorio) y `--comprobar` ensayado.
+
+La noche: F3, F4 y F5 seguidos, sin pausas. Entregar primero a quien entrena a primera hora.
+
+Si un cliente no recibe o pierde su código:
+
+- Si entra con el antiguo, la app le dice que los códigos han cambiado y que lo pida a su entrenador.
+- Entrenador → «Código de acceso»: el código vigente se ve ahí y se puede **reenviar tal cual** (no hace falta cambiarlo).
+- Si se ha perdido o pudo verlo otra persona: 🎲 generar otro y guardar. La cuenta anterior deja de entrar en ese mismo momento.
+- Si F5 no puede terminar (credenciales, cuota…): la app del entrenador da acceso cliente a cliente con 🎲, sin la migración. Si después se repite la migración, esas fichas salen «a revisar» y no se tocan; en ese caso no usar `--aislar` (el script lo impide si ya hay fichas migradas, pero no distingue las activadas desde la app).
+
+## Registro público de cuentas (decisión D1)
+
+Hoy cualquiera puede crear una cuenta de correo y contraseña en el proyecto (lo necesita la web para dar de alta a los clientes). Probado en el emulador con las reglas definitivas: una cuenta así **no lee ni escribe ninguna ficha, ni el meta, ni puede listar**, y no puede apropiarse de una ficha; **sí puede leer el catálogo de ejercicios** (`catalog/exercises`). Además puede ensuciar la lista de usuarios.
+
+| Opción | Superficie | Coste | Qué cambia |
+| --- | --- | --- | --- |
+| A. Mantener el alta pública (lo preparado) | Cuentas vacías de cualquiera; catálogo legible. | Ninguno. | Nada. Razonable solo con App Check en «aplicar». |
+| B. Cerrar el alta y dar de alta desde el PC | Ninguna alta pública. Todas las cuentas llevarían la marca y las reglas podrían exigirla: una cuenta plantada en una ficha no serviría de nada. | Cada cliente nuevo o código cambiado necesita el PC y un script. Cerrar el alta exige pasar a «Firebase Authentication con Identity Platform» (comprobar en la consola el interruptor y los límites del plan gratuito). | Script de altas, reglas por marca, la app deja de crear cuentas. |
+| C. Cerrar el alta y dar de alta con una función en el servidor | Igual que B. | Plan Blaze (tarjeta; el uso entraría en la capa gratuita). | Una función que solo acepta al entrenador. La entrada de los clientes no se ralentiza: la función solo actúa en las altas. |
+
+## Dónde pueden quedar códigos en claro
+
+- **Migración:** en ningún sitio fuera de Firestore (probado).
+- **Firestore** (`coach_data.codes` y `code` de cada ficha): necesario para que el entrenador pueda reenviarlos; solo los lee el entrenador (y cada cliente el suyo).
+- **«Descargar copia» de la app:** el JSON incluye todos los códigos y el PIN antiguo, **sin cifrar** (decisión D3).
+- **Copia completa del PC:** solo con `--cifrar`.
+- Copias antiguas: los códigos de hoy dejan de valer tras F5.
 
 ## iPhone: comprobaciones reales (P6, F6 y F7)
 
@@ -153,6 +207,6 @@ Con la web publicada en F3–F4 (no antes: hasta entonces no hay Auth). Cada lí
 5. Guardar una serie; cerrar la app del todo; volver a abrir: la serie está. Verla también desde el ordenador del entrenador.
 6. Modo avión: guardar una serie → aviso rojo «no están guardados». Quitar modo avión → el aviso desaparece solo y la serie está en el ordenador.
 7. «Cerrar sesión» y volver a entrar con el código: la serie sigue.
-8. Otro código inventado: «Código no válido».
+8. Otro código inventado: «Código no válido». Un código antiguo (p. ej. el DNI): «Los códigos de acceso han cambiado…», sin llegar a enviarlo a Firebase.
 
 Nota: Safari borra los datos de una web que no se abre en 7 días (la app de inicio, no). Un cliente que solo use Safari y no entre en una semana tendrá que volver a escribir su código; no pierde nada guardado en la nube.

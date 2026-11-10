@@ -15,7 +15,9 @@
 
      Ensayo con una copia (sin red):  node scripts/migrate-client-auth.js --backup copia.json
      Ensayo con lo que hay ahora (solo lee):  node scripts/migrate-client-auth.js --comprobar
-     Aplicar:  ALLOW_AUTH_MIGRATION_APPLY=yes node scripts/migrate-client-auth.js --apply
+     Aplicar:  ALLOW_AUTH_MIGRATION_APPLY=yes node scripts/migrate-client-auth.js --apply [--aislar]
+       --aislar: las fichas con cuentas dudosas, además de quedar «a revisar», pierden el acceso de esas cuentas
+       (se mueven a cuentasEnRevision; ninguna cuenta se borra, desactiva ni reasigna).
    Contra los emuladores basta con FIRESTORE_EMULATOR_HOST y FIREBASE_AUTH_EMULATOR_HOST. */
 const fs = require('fs');
 const id = require('../auth/code-identity');
@@ -38,6 +40,16 @@ function sello(actual) {
     _updatedBy: MARCA,
     _writers: previos.concat(MARCA).slice(-WRITERS_KEEP)
   };
+}
+
+// Solo el código técnico del error (p. ej. auth/quota-exceeded): nunca el mensaje, que podría llevar datos.
+function codigoError(e) {
+  const c = e && e.code;
+  return (typeof c === 'string' && /^[a-z0-9/_-]{1,60}$/i.test(c)) ? c : 'error';
+}
+
+function enRevision(ficha) {
+  return !!(ficha && Array.isArray(ficha.cuentasEnRevision) && ficha.cuentasEnRevision.length);
 }
 
 function uidsDe(ficha) {
@@ -130,7 +142,8 @@ async function comprobar(admin) {
   for (const d of snap.docs) {
     if (d.id === 'coach_data') continue;
     const uids = uidsDe(d.data());
-    if (!uids.length) rows.push({ clientId: d.id, action: 'nuevo-codigo', reason: '' });
+    if (enRevision(d.data())) rows.push({ clientId: d.id, action: 'revisar', reason: 'cuentas-aisladas-en-revision' });
+    else if (!uids.length) rows.push({ clientId: d.id, action: 'nuevo-codigo', reason: '' });
     else if (await cuentasPropias(admin, d.id, uids)) rows.push({ clientId: d.id, action: 'hecha', reason: '' });
     else rows.push({ clientId: d.id, action: 'revisar', reason: 'cuentas-no-verificadas' });
   }
@@ -141,17 +154,48 @@ async function applyMigration(opciones) {
   const mode = assertApplyAllowed();
   const admin = initAdmin(mode);
   const generar = (opciones && opciones.generar) || id.generateClientCode;
+  const aislar = !!(opciones && opciones.aislar);
   const db = admin.firestore();
   const metaRef = db.collection('clients').doc('coach_data');
   const r = { mode: mode, migradas: 0, yaHechas: 0, revisar: [], errores: [] };
+  // --aislar solo en la PRIMERA ejecución: después, las cuentas creadas desde la app (que no llevan la marca)
+  // parecerían dudosas y se les quitaría el acceso por error.
+  if (aislar && (await comprobar(admin)).some(function (x) { return x.action === 'hecha'; })) {
+    const err = new Error('--aislar solo se puede usar en la primera ejecución de la migración.');
+    err.code = 'AISLAR_SOLO_PRIMERA_VEZ';
+    throw err;
+  }
   const fichas = (await db.collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
   for (const d of fichas) {
     const cid = d.id;
     try {
+      if (enRevision(d.data())) { r.revisar.push({ clientId: cid, motivo: 'cuentas-aisladas-en-revision' }); continue; }
       const uids0 = uidsDe(d.data());
       if (uids0.length) {
-        if (await cuentasPropias(admin, cid, uids0)) r.yaHechas++;
-        else r.revisar.push({ clientId: cid, motivo: 'ya-tiene-cuentas-no-verificadas' });
+        if (await cuentasPropias(admin, cid, uids0)) { r.yaHechas++; continue; }
+        // Identidad dudosa: no se migra. Con --aislar, además se le quita el acceso a esas cuentas moviéndolas a
+        // cuentasEnRevision (no se borran, no se desactivan y no se asignan a nadie). Sin --aislar, no se toca.
+        if (aislar) {
+          const ref = db.collection('clients').doc(cid);
+          const hecho = await db.runTransaction(async function (tx) {
+            const snap = await tx.get(ref);
+            if (!snap.exists) return false;
+            const live = snap.data() || {};
+            const uids = uidsDe(live);
+            if (!uids.length) return false;
+            const previas = Array.isArray(live.cuentasEnRevision) ? live.cuentasEnRevision : [];
+            tx.update(ref, Object.assign({
+              authUid: admin.firestore.FieldValue.delete(),
+              authUids: [],
+              cuentasEnRevision: Array.from(new Set(previas.concat(uids)))
+            }, sello(live)));
+            return true;
+          });
+          r.revisar.push({ clientId: cid, motivo: hecho ? 'cuentas-no-verificadas-aisladas' : 'ya-tiene-cuentas-no-verificadas' });
+          if (hecho) r.aisladas = (r.aisladas || 0) + 1;
+        } else {
+          r.revisar.push({ clientId: cid, motivo: 'ya-tiene-cuentas-no-verificadas' });
+        }
         continue;
       }
       const code = id.normAuthCode(generar());
@@ -169,7 +213,7 @@ async function applyMigration(opciones) {
         const [snap, meta] = await Promise.all([tx.get(ref), tx.get(metaRef)]);
         if (!snap.exists) return 'ficha-borrada';
         const live = snap.data() || {};
-        if (uidsDe(live).length) return 'cuentas-nuevas-durante-la-migracion';
+        if (uidsDe(live).length || enRevision(live)) return 'cuentas-nuevas-durante-la-migracion';
         const m = meta.exists ? (meta.data() || {}) : {};
         const codes = Object.assign({}, m.codes || {});
         Object.keys(codes).forEach(function (k) { if (codes[k] && codes[k].client === cid) delete codes[k]; });
@@ -185,7 +229,7 @@ async function applyMigration(opciones) {
       else r.revisar.push({ clientId: cid, motivo: res });
     } catch (e) {
       // Un fallo en una ficha no para las demás. Sin la transacción final, la ficha no queda vinculada.
-      r.errores.push({ clientId: cid, codigo: (e && e.code) || 'error' });
+      r.errores.push({ clientId: cid, codigo: codigoError(e) });
     }
   }
   return r;
@@ -221,11 +265,12 @@ async function main() {
     }
     throw e;
   }
-  const r = await applyMigration();
+  const r = await applyMigration({ aislar: process.argv.includes('--aislar') });
   console.log('Aplicado (' + r.mode + '). Fichas con código nuevo: ' + r.migradas + '. Ya migradas antes: ' + r.yaHechas +
-    '. A revisar: ' + r.revisar.length + '. Con error: ' + r.errores.length + '.');
+    '. A revisar: ' + r.revisar.length + (r.aisladas ? ' (sin acceso hasta revisarlas: ' + r.aisladas + ')' : '') + '. Con error: ' + r.errores.length + '.');
   r.revisar.forEach(function (x) { console.log('! revisar ' + x.clientId + ' (' + x.motivo + '). No se ha tocado: decide a mano.'); });
   r.errores.forEach(function (x) { console.log('! error ' + x.clientId + ' (' + x.codigo + '). Se puede repetir el comando.'); });
+  // Nada de esto se escribe en archivos: la salida es solo la pantalla, sin códigos, correos ni uids.
   console.log('Los códigos nuevos se ven en la app del entrenador («Código de acceso» de cada cliente). No se han impreso.');
   if (r.revisar.length || r.errores.length) process.exitCode = 3;
 }

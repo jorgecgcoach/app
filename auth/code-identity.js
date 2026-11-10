@@ -33,6 +33,8 @@
   function randomBytes(n) {
     var out = new Uint8Array(n);
     if (globalThis.crypto && globalThis.crypto.getRandomValues) { globalThis.crypto.getRandomValues(out); return out; }
+    // Nunca una fuente predecible (el aleatorio normal de JavaScript): sin generador criptográfico no se genera nada.
+    if (typeof require !== 'function') throw new Error('sin-generador-seguro');
     var b = require('crypto').randomBytes(n);
     for (var i = 0; i < n; i++) out[i] = b[i];
     return out;

@@ -76,3 +76,57 @@ test('los códigos tipo documento de identidad o cortos NO son fuertes', functio
     assert.equal(id.isStrongCode(debil), false, debil);
   }
 });
+
+// Revisión de entropía (C1, cierre del acceso).
+test('sin sesgo: cada símbolo aparece con la misma frecuencia en cada posición (chi-cuadrado)', function () {
+  const N = 64000, ALF = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const cuentas = Array.from({ length: 12 }, () => new Array(32).fill(0));
+  for (let i = 0; i < N; i++) {
+    const c = id.generateClientCode().replace(/-/g, '');
+    for (let p = 0; p < 12; p++) cuentas[p][ALF.indexOf(c[p])]++;
+  }
+  const esperado = N / 32;
+  for (let p = 0; p < 12; p++) {
+    const chi = cuentas[p].reduce((s, o) => s + (o - esperado) ** 2 / esperado, 0);
+    // 31 grados de libertad: p < 1e-5 a partir de ~75. Un generador sesgado (p. ej. % 36) da miles.
+    assert.ok(chi < 80, 'posición ' + p + ': chi² = ' + chi.toFixed(1));
+  }
+});
+
+test('sin colisiones en 200.000 códigos (probabilidad teórica ~2·10⁻⁸)', function () {
+  const vistos = new Set();
+  for (let i = 0; i < 200000; i++) vistos.add(id.generateClientCode());
+  assert.equal(vistos.size, 200000);
+});
+
+test('el generador usa solo el generador criptográfico: nada de Math.random', function () {
+  const fuente = require('fs').readFileSync(require('path').join(__dirname, 'code-identity.js'), 'utf8');
+  assert.equal(/Math\.random/.test(fuente), false);
+  assert.match(fuente, /getRandomValues/);
+  // 256 es múltiplo de 32: recortar un byte a 5 bits no introduce sesgo.
+  assert.equal(256 % 32, 0);
+});
+
+test('la normalización no reduce el espacio: códigos distintos nunca se confunden y es idempotente', function () {
+  const ALF = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  // Los únicos símbolos que se reinterpretan (O, I, L) NO están en el alfabeto: no se fusionan dos códigos válidos.
+  for (const ch of 'OIL') assert.equal(ALF.includes(ch), false);
+  assert.equal(ALF.includes('U'), false);
+  assert.equal(new Set(ALF).size, 32);
+  for (let i = 0; i < 2000; i++) {
+    const c = id.generateClientCode();
+    assert.equal(id.normAuthCode(c), c);
+    assert.equal(id.normAuthCode(id.normAuthCode(c.toLowerCase())), c);
+    // Cambiar un símbolo cualquiera da otro código y otro correo.
+    const s = c.replace(/-/g, ''), p = i % 12, otro = ALF[(ALF.indexOf(s[p]) + 1) % 32];
+    const vecino = s.slice(0, p) + otro + s.slice(p + 1);
+    assert.notEqual(id.normAuthCode(vecino), c);
+  }
+});
+
+test('un código escrito a medias o con un símbolo de más no se completa ni se recorta', function () {
+  assert.equal(id.isStrongCode('7K3M-Q9TB-0R1'), false);
+  assert.equal(id.isStrongCode('7K3M-Q9TB-0R1W-'), true, 'los guiones sobrantes no cuentan');
+  assert.equal(id.isStrongCode('7K3M-Q9TB-0R1W7'), false);
+  assert.equal(id.isStrongCode('7K3M_Q9TB_0R1W'), false);
+});

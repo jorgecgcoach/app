@@ -2021,7 +2021,7 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <button class="linky" onclick="genCodeModal()">🎲 Generar uno automático</button>
     <div class="row">
       <button class="ghost" onclick="closeCodeModal()">Cancelar</button>
-      <button class="primary navy" onclick="saveCodeModal()">Guardar</button>
+      <button class="primary navy" id="codeModalSave" onclick="saveCodeModal()">Guardar</button>
     </div>
   </div>
 </div>
@@ -7896,7 +7896,7 @@ function doImportEquiv(){
 }
 
 /* ---------- add block ---------- */
-function openAdd(){const c=DATA.clients[DATA.active.c];$("#addClient").value=c?c.name:"";$("#addLabel").value="";$("#addCode").value=clientCodeOf(DATA.active&&DATA.active.c)||"";ADD_SVC="";renderAddSvc();$("#addScrim").classList.add("open")}
+function openAdd(){const c=DATA.clients[DATA.active.c];$("#addClient").value=c?c.name:"";$("#addLabel").value="";$("#addCode").value=clientCodeOf(DATA.active&&DATA.active.c)||"";$("#addCode").readOnly=AUTH_ENABLED;ADD_SVC="";renderAddSvc();$("#addScrim").classList.add("open")}
 function closeAdd(){$("#addScrim").classList.remove("open")}
 function saveBlock(){
  const name=$("#addClient").value.trim(),label=$("#addLabel").value.trim()||"Nuevo bloque";
@@ -8793,6 +8793,13 @@ async function loginClientWithAuth(btn){
   const t0=performance.now();
   try{
     await ensureAuthReady();
+    // Los códigos antiguos (elegidos a mano, a menudo un documento) ya no existen: se avisa sin enviarlos a
+    // ningún servidor y explicando qué hacer, en vez de «código no válido».
+    if(!window.JcgAuthIdentity.isStrongCode(code)){
+      const err=new Error('old-code');err.code='jcg/codigo-antiguo';
+      err.userMessage='Los códigos de acceso han cambiado por seguridad. Pide el tuyo nuevo a tu entrenador: tiene 12 letras y números, como ABCD-EFGH-JKMN.';
+      throw err;
+    }
     const email=await window.JcgAuthIdentity.clientEmailFromCode(code);
     const password=window.JcgAuthIdentity.clientPasswordFromCode(code);
     const cred=await firebase.auth().signInWithEmailAndPassword(email, password);
@@ -8927,7 +8934,9 @@ function logoutWithAuth(){
   const p=(firebase.auth&&firebase.apps&&firebase.apps.length)?firebase.auth().signOut():Promise.resolve();
   Promise.resolve(p).catch(()=>{}).then(()=>{ renderGate(); });
 }
-async function provisionClientAuth(cid, code){
+/* Solo CREA la cuenta del código (en una segunda instancia de Auth, sin tocar la sesión del entrenador) y
+   devuelve su uid. No cambia la ficha: eso lo hace cambiarCodigoConCuenta cuando la cuenta ya existe. */
+async function provisionClientAuth(code){
   const email=await window.JcgAuthIdentity.clientEmailFromCode(code);
   const password=window.JcgAuthIdentity.clientPasswordFromCode(code);
   const name='jcgProvision';
@@ -8948,52 +8957,93 @@ async function provisionClientAuth(cid, code){
   }finally{
     try{ await auth.signOut(); }catch(_){}
   }
-  if(DATA.clients[cid]){
-    DATA.clients[cid].authUid=uid;
-    // Al asignar un código nuevo, SOLO vale su cuenta: cualquier otra que hubiera en la ficha (códigos
-    // anteriores o una cuenta ajena escrita mientras las reglas estaban abiertas) deja de tener acceso.
-    DATA.clients[cid].authUids=[uid];
-  }
   return uid;
+}
+function errorAlta(code,extra){const e=new Error(code);e.code=code;if(extra)e.aviso=extra;return e}
+/* La sesión del entrenador tiene que seguir viva ANTES de crear nada: si ha caducado, la ficha no se podría
+   guardar y quedaría una cuenta sin vincular. getIdToken(true) lo comprueba contra el servidor. */
+async function comprobarSesionEntrenador(){
+  const u=firebase.auth().currentUser;
+  if(!u)throw errorAlta('jcg/sesion-entrenador');
+  try{ await u.getIdToken(true); }
+  catch(x){ throw errorAlta(x&&x.code==='auth/network-request-failed'?'auth/network-request-failed':'jcg/sesion-entrenador'); }
+}
+/* Cambio de código con Auth (alta o regeneración). Orden seguro:
+   1) se valida el código (solo los generados en este dispositivo, sin dueño); 2) la sesión del entrenador
+   sigue viva; 3) se crea la cuenta: si ya existía, NO se usa (pudo crearla otra persona); 4) solo entonces se
+   cambian a la vez el código y las cuentas de la ficha. Si algo falla antes del paso 4, la ficha queda como
+   estaba: el código anterior sigue funcionando y no se da acceso a medias. Un solo cambio a la vez. */
+let _altaEnCurso=false;
+async function cambiarCodigoConCuenta(cid,raw){
+  const code=normCode(raw);
+  const aviso=validarCodigoNuevo(cid,code);
+  if(aviso)throw errorAlta('jcg/codigo-no-valido',aviso);
+  if(_altaEnCurso)throw errorAlta('jcg/alta-en-curso');
+  _altaEnCurso=true;
+  try{
+    await ensureAuthReady();
+    await comprobarSesionEntrenador();
+    const uid=await provisionClientAuth(code);
+    const c=DATA.clients[cid];
+    if(!c)throw errorAlta('jcg/ficha-borrada');
+    DATA.codes=DATA.codes||{};
+    Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k].client===cid)delete DATA.codes[k]});
+    DATA.codes[code]={client:cid};
+    c.code=code;
+    c.authUid=uid;
+    // SOLO vale la cuenta nueva: cualquier otra que hubiera en la ficha (códigos anteriores o una cuenta
+    // ajena) deja de tener acceso en este mismo guardado.
+    c.authUids=[uid];
+    _codigosGenerados.delete(code); // de un solo uso
+    save(cid);
+    return uid;
+  }finally{ _altaEnCurso=false; }
+}
+function avisoAltaCliente(e){
+  const c=e&&e.code;
+  if(c==='jcg/codigo-no-valido')return e.aviso;
+  if(c==='jcg/alta-en-curso')return 'Ya se está activando un acceso. Espera unos segundos.';
+  if(c==='jcg/code-in-use')return '⚠ Ese código ya tenía una cuenta y no se ha usado. Genera otro (🎲) y guárdalo. No se ha cambiado el acceso del cliente.';
+  if(c==='jcg/sesion-entrenador')return '⚠ Tu sesión ha caducado. Vuelve a entrar y repítelo. No se ha cambiado el acceso del cliente.';
+  if(c==='jcg/ficha-borrada')return '⚠ Esa ficha ya no existe. No se ha cambiado nada.';
+  return '⚠ No se pudo crear la cuenta (¿sin conexión?). No se ha cambiado el acceso del cliente: repítelo con conexión.';
 }
 /* El código puesto en «Nuevo cliente» o «Añadir bloque» también crea la cuenta de acceso cuando Auth está
    activo. Antes solo lo hacía la ventana «Código de acceso», y un cliente recién creado no podía entrar. */
 function codigoAlGuardarBloque(cid,codeRaw){
   if(!codeRaw||codeRaw===clientCodeOf(cid))return null;
-  if(!assignClientCode(cid,codeRaw))return null;
-  if(!AUTH_ENABLED)return null;
+  if(!AUTH_ENABLED){assignClientCode(cid,codeRaw);return null}
   return activarAccesoCliente(cid,codeRaw);
 }
 async function activarAccesoCliente(cid,code){
   try{
-    await ensureAuthReady();
-    await provisionClientAuth(cid,code);
-    save(cid);
-    toast('Acceso del cliente activado');
+    await cambiarCodigoConCuenta(cid,code);
+    toast('Acceso del cliente activado. Envíale su código.');
     return true;
   }catch(e){
     console.warn('[auth] alta cliente', (e&&e.code)||'error');
-    toast(e&&e.code==='jcg/code-in-use'?'⚠ Ese código ya tenía una cuenta y no se ha usado. Abre «Código de acceso», genera otro (🎲) y guárdalo.':'⚠ El código quedó guardado, pero no se pudo crear la cuenta del cliente. Abre «Código de acceso», genera otro (🎲) y guárdalo.');
+    toast(avisoAltaCliente(e));
     return false;
   }
 }
 async function saveCodeModalWithAuth(){
   if(!CODE_CID)return;
-  try{ await ensureAuthReady(); }
-  catch(e){ toast('No se ha podido preparar el acceso. Revisa la conexión.'); return; }
-  const raw=$("#codeModalIn").value;
-  const code=normCode(raw);
-  if(!assignClientCode(CODE_CID, raw))return; // solo códigos generados (codeAllowed)
+  const cid=CODE_CID;
+  const code=normCode($("#codeModalIn").value);
+  if(code&&code===clientCodeOf(cid)){closeCodeModal();toast('Sin cambios: el código sigue siendo el mismo.');return}
+  const btn=$("#codeModalSave");
+  if(btn)btn.disabled=true;
   try{
-    await provisionClientAuth(CODE_CID, code);
-    save(CODE_CID);
+    await cambiarCodigoConCuenta(cid,code);
     closeCodeModal();
     renderSide();
-    if(MENU_CID===CODE_CID&&$("#clientMenuScrim").classList.contains("open"))renderClientMenu();
-    toast('Código guardado y acceso activado');
+    if(MENU_CID===cid&&$("#clientMenuScrim").classList.contains("open"))renderClientMenu();
+    toast('Código guardado y acceso activado. Envíaselo al cliente.');
   }catch(e){
     console.warn('[auth] alta cliente', (e&&e.code)||'error');
-    toast(e&&e.code==='jcg/code-in-use'?'⚠ Ese código ya tenía una cuenta y no se ha usado. Genera otro (🎲) y guárdalo.':'⚠ No se pudo crear la cuenta (¿sin conexión?). Genera otro código (🎲) y guárdalo cuando haya conexión.');
+    toast(avisoAltaCliente(e));
+  }finally{
+    if(btn)btn.disabled=false;
   }
 }
 
@@ -9137,11 +9187,16 @@ function clientCodeOf(cid){if(!cid)return null;const c=DATA.clients[cid];if(c&&c
 function normCode(s){if(window.JcgAuthIdentity)return window.JcgAuthIdentity.normAuthCode(s);return String(s||'').toUpperCase().replace(/\s+/g,'').trim()}
 // Con acceso por cuenta (AUTH_ENABLED) solo valen códigos aleatorios generados (60 bits). Los elegidos a mano
 // (nombres, documentos de identidad) se pueden adivinar probando.
-function codeAllowed(code){return !AUTH_ENABLED||!!(window.JcgAuthIdentity&&window.JcgAuthIdentity.isStrongCode(code))}
-function newClientCode(){return window.JcgAuthIdentity?window.JcgAuthIdentity.generateClientCode():''}
-function assignClientCode(cid,raw){const code=normCode(raw);if(code.length<3){toast("El código debe tener al menos 3 caracteres");return false}if(!codeAllowed(code)){toast("⚠ Solo valen códigos generados (🎲). No se ha cambiado el código.");return false}DATA.codes=DATA.codes||{};if(DATA.codes[code]&&DATA.codes[code].client!==cid){toast("Ese código ya lo usa otro cliente");return false}Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k].client===cid)delete DATA.codes[k]});DATA.codes[code]={client:cid};if(DATA.clients[cid])DATA.clients[cid].code=code;save(cid);return true}
+/* Con Auth solo valen códigos GENERADOS en este dispositivo (no basta con que «parezcan» aleatorios: un texto de
+   12 símbolos tecleado a mano tendría el formato, pero no la entropía). */
+const _codigosGenerados=new Set();
+function isStrongFormat(code){return !!(window.JcgAuthIdentity&&window.JcgAuthIdentity.isStrongCode(code))}
+function codeAllowed(code){return !AUTH_ENABLED||(isStrongFormat(code)&&_codigosGenerados.has(normCode(code)))}
+function newClientCode(){if(!window.JcgAuthIdentity)return'';const c=window.JcgAuthIdentity.generateClientCode();_codigosGenerados.add(c);return c}
+function validarCodigoNuevo(cid,code){if(code.length<3)return "El código debe tener al menos 3 caracteres";if(!codeAllowed(code))return "⚠ Solo valen códigos generados (🎲). No se ha cambiado el código.";if(DATA.codes&&DATA.codes[code]&&DATA.codes[code].client!==cid)return "Ese código ya lo usa otro cliente";return ''}
+function assignClientCode(cid,raw){const code=normCode(raw);const aviso=validarCodigoNuevo(cid,code);if(aviso){toast(aviso);return false}DATA.codes=DATA.codes||{};Object.keys(DATA.codes).forEach(k=>{if(DATA.codes[k].client===cid)delete DATA.codes[k]});DATA.codes[code]={client:cid};if(DATA.clients[cid])DATA.clients[cid].code=code;save(cid);return true}
 let CODE_CID=null;
-function openCodeModal(cid){CODE_CID=cid;const c=DATA.clients[cid];let sub=AUTH_ENABLED?`Código de acceso de ${c?c.name:'el cliente'}. Pulsa 🎲 para generar uno aleatorio y seguro, guárdalo y envíaselo. Solo lo escribe una vez: la sesión queda abierta en su móvil. Al cambiarlo, el código anterior deja de funcionar.`:`Código de acceso de ${c?c.name:'el cliente'}. Ponle uno fácil de recordar (el que tú elijas). Siempre será el mismo.`;$("#codeModalSub").textContent=sub;const cur=clientCodeOf(cid)||"";$("#codeModalIn").value=(AUTH_ENABLED&&!codeAllowed(cur))?newClientCode():cur;$("#codeScrim").classList.add("open");setTimeout(()=>{const i=$("#codeModalIn");if(i)i.focus()},60)}
+function openCodeModal(cid){CODE_CID=cid;const c=DATA.clients[cid];let sub=AUTH_ENABLED?`Código de acceso de ${c?c.name:'el cliente'}. Pulsa 🎲 para generar uno aleatorio y seguro, guárdalo y envíaselo. Solo lo escribe una vez: la sesión queda abierta en su móvil. Al cambiarlo, el código anterior deja de funcionar.`:`Código de acceso de ${c?c.name:'el cliente'}. Ponle uno fácil de recordar (el que tú elijas). Siempre será el mismo.`;$("#codeModalSub").textContent=sub;const cur=clientCodeOf(cid)||"";$("#codeModalIn").value=(AUTH_ENABLED&&!isStrongFormat(cur))?newClientCode():cur;$("#codeModalIn").readOnly=AUTH_ENABLED;$("#codeScrim").classList.add("open");setTimeout(()=>{const i=$("#codeModalIn");if(i)i.focus()},60)}
 function closeCodeModal(){$("#codeScrim").classList.remove("open")}
 function genCodeModal(){const c=DATA.clients[CODE_CID];if(!c)return;if(AUTH_ENABLED){$("#codeModalIn").value=newClientCode();return}const base=(c.name.split(" ")[0].toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6))||"CLIENTE";const r=Math.random().toString(36).slice(2,6).toUpperCase();$("#codeModalIn").value=`${base}-${r}`}
 function saveCodeModal(){

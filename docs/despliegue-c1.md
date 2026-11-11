@@ -63,7 +63,7 @@ En todos los casos la guardia `_rev` impide que una versión vieja pise una nuev
 | P3 | Reglas generadas y probadas con el UID real. | Yo | Huellas anotadas. |
 | P4 | Ensayo de la migración con la copia: `node scripts/migrate-client-auth.js --backup <copia>` (no escribe nada). | Tú, conmigo | Dice «dry-run», cuántas fichas recibirán código nuevo y cuáles irían «a revisar», sin datos personales. |
 | P5 | Permiso de Storage para leer Firestore (abajo). **No se concede antes:** se hace en F4, tras comprobar la identidad exacta del agente de servicio y sus roles actuales. | Tú, en F4 | Comprobación de solo lectura del final de la sección. |
-| P6 | Comprobaciones en el iPhone real (lista al final). | Tú | Todo en verde. |
+| P6 | Comprobaciones en el iPhone real (lista al final). **Solo se pueden hacer con la web publicada**: se hacen en F6–F7. Antes, opcional: ensayo en el iPhone por wifi contra los emuladores (`E2E_LAN` + `E2E_AUTH` en `e2e/serve.js`), con datos ficticios; no prueba el Google real. | Tú, en la ventana | Todo en verde. |
 
 ### P5. Permiso mínimo de Storage → Firestore
 

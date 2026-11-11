@@ -34,11 +34,25 @@ Antes de desplegar, compara `reglas-despliegue/huellas.txt` con la salida de `np
 
 ## Campos del entrenador
 
-En su ficha, un cliente **no puede** cambiar: `name` (identidad), `code` (código), `authUid` / `authUids` (cuentas de acceso), `mods` (módulos que ve), `serviceType` y `notifs` (configuración del entrenador) ni `pagos` (datos administrativos). Tampoco leer ni escribir otras fichas, `coach_data` (códigos, negocio, CRM, PIN) ni `contacts`. Cualquier escritura que toque uno de esos campos se rechaza **entera**.
+En su ficha, un cliente **no puede** cambiar: `name` (identidad), `code` (código), `authUid` / `authUids` (cuentas de acceso), `mods` (módulos que ve), `serviceType` y `notifs` (configuración del entrenador) ni `pagos` (datos administrativos), ni sus **valoraciones y pruebas de carga** (`backRehab`, datos clínicos que escribe solo el entrenador; añadido el 11-11-2026). Tampoco leer ni escribir otras fichas, `coach_data` (códigos, negocio, CRM, PIN) ni `contacts`. Cualquier escritura que toque uno de esos campos se rechaza **entera**.
 
 Fallo encontrado el 11-11-2026 (antes de publicar): la app rellena en memoria los tipos de aviso que faltan en fichas antiguas. Con las reglas estrictas, ese relleno hacía que se rechazara también la serie que el cliente guardaba: **un cliente con la ficha antigua no podía guardar nada**. Corregido en la app (`shared/campos-cliente.js`): la app del cliente envía esos campos tal como están en la nube. Pruebas: `firestore/envio-cliente.test.js` (con el guardado real y las reglas) y comprobación en el navegador con emuladores.
 
 Lo que el cliente sí puede cambiar de su ficha y no es suyo: el programa dentro de `blocks` (va en el mismo campo que sus series). Solo le afecta a él; el entrenador lo ve y lo puede corregir.
+
+Revisión del 11-11-2026, «¿qué puede cambiar un cliente con llamadas directas a Firebase?»:
+
+| Dato | ¿Puede? | Valoración |
+| --- | --- | --- |
+| Pagos de su ficha, contratos y pagos del negocio | No (`pagos` protegido; `coach_data` ni lo lee) | — |
+| Valoraciones y pruebas de carga | No (desde el 11-11) | Corregido antes de publicar |
+| Su programa (`blocks`) | Sí, en su propia ficha | Aceptable: va en el mismo campo que sus series; solo le afecta a él y se recupera de la copia |
+| Formularios de salud (`fichas`), revisiones mensuales (`reviews`), pesos | Sí | Aceptable: los rellena él mismo |
+| Dietas y menús (`dietRecs`, `menus`) | Sí | Aceptable por ahora: los hace el entrenador, pero bloquearlos exige revisar antes qué marca el cliente en esas pantallas |
+| Sus fotos y analíticas en Storage | Subir, sustituir y borrar las suyas | Aceptable: son suyas; quedan en la copia completa |
+| Datos de otro cliente | No | — |
+
+En todos los casos la guardia `_rev` impide que una versión vieja pise una nueva.
 
 ## Antes del día del cambio
 

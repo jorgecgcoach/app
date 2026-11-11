@@ -13,6 +13,7 @@ const BASE = () => ({
   name: 'Cliente Ficticio A', code: 'COD-A', authUid: 'uid-a', _rev: 4, _updatedBy: 'x', _writers: ['x'],
   mods: { semana: true, programa: false }, serviceType: 'training', notifs: { seguimiento: { mode: 'auto' } },
   pagos: [{ id: 1, importe: 60 }], push: { enabled: false, tokens: [] },
+  backRehab: { assessments: [{ id: 'as1', date: '2026-11-11', data: { dolor: 4 } }], loadTests: [] },
   fichas: { entrenamiento: {}, nutricion: {} }, fichasDone: false,
   blocks: [{ id: 'b1', data: { _logv: 2, log: { 'e1|0': { kg: '60', reps: '8', rir: '2' } }, exNotes: {} } }]
 });
@@ -48,6 +49,9 @@ for (const [campo, cambiar] of [
   ['módulos (activar uno oculto)', d => { d.mods.programa = true; }],
   ['tipo de servicio', d => { d.serviceType = 'premium'; }],
   ['avisos configurados', d => { d.notifs = {}; }],
+  ['valoraciones (cambiar una)', d => { d.backRehab.assessments[0].data.dolor = 0; }],
+  ['valoraciones (borrarlas)', d => { d.backRehab = { assessments: [], loadTests: [] }; }],
+  ['pruebas de carga', d => { d.backRehab.loadTests.push({ id: 'lt', kg: 1 }); }],
   ['dueño de la ficha', d => { d.authUid = 'uid-x'; }]
 ]) {
   test('el cliente NO puede cambiar: ' + campo + ' (y la serie que iba en la misma escritura tampoco entra)', async () => {
@@ -63,12 +67,13 @@ test('el cliente tampoco puede BORRAR esos campos', async () => {
   await sembrar();
   await assertFails(updateDoc(doc(cliente(), 'clients/client-a'), { pagos: deleteField() }));
   await assertFails(updateDoc(doc(cliente(), 'clients/client-a'), { mods: deleteField() }));
+  await assertFails(updateDoc(doc(cliente(), 'clients/client-a'), { backRehab: deleteField(), _rev: 5 }));
 });
 test('ficha antigua sin módulos/servicio/avisos: la app del cliente puede rellenarlos por defecto y seguir registrando', async () => {
-  const vieja = BASE(); delete vieja.mods; delete vieja.serviceType; delete vieja.notifs;
+  const vieja = BASE(); delete vieja.mods; delete vieja.serviceType; delete vieja.notifs; delete vieja.backRehab;
   await sembrar(vieja);
   const ref = doc(cliente(), 'clients/client-a');
-  const d = Object.assign({}, vieja, { mods: { semana: true }, serviceType: null, notifs: { seguimiento: { mode: 'auto' } }, _rev: 5 });
+  const d = Object.assign({}, vieja, { mods: { semana: true }, serviceType: null, notifs: { seguimiento: { mode: 'auto' } }, backRehab: { assessments: [], loadTests: [] }, _rev: 5 });
   d.blocks = [{ id: 'b1', data: { _logv: 2, log: { 'e1|0': { kg: '60' }, 'e1|1': { kg: '61' } }, exNotes: {} } }];
   await assertSucceeds(setDoc(ref, d));
   // …pero una vez existen, ya no los cambia.

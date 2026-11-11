@@ -90,6 +90,8 @@ test('con las reglas estrictas el cliente registra series sin perder la valoraci
     // Una pestaña con datos viejos (sin la valoración) intenta guardar con su _rev antiguo: rechazado.
     await assert.rejects(updateDoc(ref, { backRehab: { assessments: [], loadTests: [] }, _rev: actual._rev + 1 }), /permission/i);
     await assert.rejects(updateDoc(ref, { backRehab: { assessments: [], loadTests: [] } }), /permission/i);
+    // Ni siquiera con el _rev correcto puede cambiar o borrar su valoración (la escribe solo el entrenador).
+    await assert.rejects(updateDoc(ref, { backRehab: { assessments: [], loadTests: [] }, _rev: actual._rev + 2 }), /permission/i);
     // No puede leer ni escribir el negocio.
     await assert.rejects(getDoc(doc(cdb, 'clients/coach_data')), /permission/i);
     await assert.rejects(updateDoc(doc(cdb, 'clients/coach_data'), { negocio: {}, _rev: 41 }), /permission/i);

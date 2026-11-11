@@ -67,7 +67,7 @@ service cloud.firestore {
 
     // Campos que SOLO cambia el entrenador. El cliente escribe su registro (blocks), sus formularios
     // (fichas), sus avisos (push), etc., pero no puede cambiar su nombre, su código, sus pagos ni lo que
-    // el entrenador configura para él. mods, serviceType y notifs los rellena la app con valores por
+    // el entrenador configura para él, ni sus valoraciones (backRehab). mods, serviceType, notifs y backRehab los rellena la app con valores por
     // defecto si faltan: el cliente puede CREARLOS si no existen, nunca cambiarlos.
     // (authUid/authUids: ownersUnchanged.)
     function clientFieldsOk() {
@@ -75,7 +75,8 @@ service cloud.firestore {
       return !changed.hasAny(['code', 'name', 'pagos'])
         && (!changed.hasAny(['mods']) || !('mods' in resource.data))
         && (!changed.hasAny(['serviceType']) || !('serviceType' in resource.data))
-        && (!changed.hasAny(['notifs']) || !('notifs' in resource.data));
+        && (!changed.hasAny(['notifs']) || !('notifs' in resource.data))
+        && (!changed.hasAny(['backRehab']) || !('backRehab' in resource.data));
     }
 
 

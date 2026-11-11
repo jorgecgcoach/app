@@ -17,6 +17,12 @@ test('si faltan en la nube: los creables viajan; identidad, código, pagos y cue
   assert.deepEqual(Object.keys(out).sort(), ['mods', 'notifs', 'serviceType', 'x']);
 });
 
+test('valoraciones: siempre las de la nube; si faltan, la app puede crear el contenedor vacío', () => {
+  const nube = { backRehab: { assessments: [{ id: 'as1', date: '2026-11-11' }], loadTests: [] } };
+  assert.deepEqual(CF.limitarEnvio({ backRehab: { assessments: [], loadTests: [] }, x: 1 }, nube).backRehab, nube.backRehab);
+  assert.deepEqual(CF.limitarEnvio({ backRehab: { assessments: [], loadTests: [] } }, {}).backRehab, { assessments: [], loadTests: [] });
+});
+
 test('sin nube conocida (null): no inventa campos del entrenador', () => {
   const out = CF.limitarEnvio({ name: 'B', mods: {}, x: 1 }, null);
   assert.deepEqual(out, { mods: {}, x: 1 });

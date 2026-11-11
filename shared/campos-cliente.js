@@ -11,7 +11,7 @@
    hay en la nube (la base del guardado seguro), nunca lo de la memoria:
    - si el campo existe en la nube, se envía el valor de la nube;
    - si no existe y es de los que el cliente puede crear por defecto (las
-     reglas lo permiten: mods, serviceType, notifs), se envía el de memoria;
+     reglas lo permiten: mods, serviceType, notifs, backRehab), se envía el de memoria;
    - si no existe y no se puede crear, no se envía.
    Así el cliente nunca cambia su identidad, códigos, cuentas, permisos ni
    datos administrativos, y las reglas nunca bloquean sus series.
@@ -27,7 +27,9 @@
   // Identidad, código, pagos (no se pueden crear ni cambiar).
   const FIJOS = ['name', 'code', 'pagos'];
   // Permisos y configuración del entrenador (se pueden crear si faltan, nunca cambiar).
-  const CREABLES = ['mods', 'serviceType', 'notifs'];
+  // backRehab: valoraciones y pruebas de carga (datos clínicos que escribe solo el entrenador; la app
+  // del cliente no las muestra). La app crea el contenedor vacío si falta en fichas antiguas.
+  const CREABLES = ['mods', 'serviceType', 'notifs', 'backRehab'];
   // Cuentas de acceso (ownersUnchanged).
   const CUENTAS = ['authUid', 'authUids'];
   const PROTEGIDOS = FIJOS.concat(CREABLES, CUENTAS);

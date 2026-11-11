@@ -12,7 +12,7 @@ const PROJECT = 'demo-appjorgecgcoach';
 process.env.GCLOUD_PROJECT = PROJECT;
 const admin = require('firebase-admin');
 if (!admin.apps.length) admin.initializeApp({ projectId: PROJECT });
-const { applyMigration } = require('./migrate-client-auth');
+const { applyMigration, comprobar, simularAislamiento } = require('./migrate-client-auth');
 const ident = require('../auth/code-identity');
 const { initializeApp, deleteApp } = require('firebase/app');
 const { getAuth, connectAuthEmulator, signInWithEmailAndPassword, signOut } = require('firebase/auth');
@@ -102,4 +102,34 @@ test('con las reglas estrictas el cliente registra series sin perder la valoraci
   assert.deepEqual(ficha.dietRecs, FICHA().dietRecs);
   assert.deepEqual(ficha.menus, FICHA().menus);
   assert.deepEqual(sin(await leer('coach_data'), DE_LA_MIGRACION.concat('codes')), sin(META(), DE_LA_MIGRACION.concat('codes')), 'negocio intacto');
+});
+
+test('la ficha de pruebas «demo» no recibe código ni cuenta, no se toca, y las fichas reales sí se migran', async () => {
+  await vaciar();
+  const DEMO = { name: 'Demo', archived: true, blocks: [{ id: 'bd', data: { log: { 'w1|d1|e1': [{ kg: 1, reps: 1 }] } } }], fichas: { a: {} }, mods: { semana: true } };
+  await db.collection('clients').doc('demo').set(DEMO);
+  await db.collection('clients').doc('real1').set(FICHA());
+  await db.collection('clients').doc('real2').set(Object.assign(FICHA(), { name: 'Otro ficticio' }));
+  await db.collection('clients').doc('coach_data').set(META());
+  const filas = await comprobar(admin);
+  assert.deepEqual(filas.find(f => f.clientId === 'demo'), { clientId: 'demo', action: 'excluida', reason: 'ficha-de-pruebas' });
+  assert.equal(filas.filter(f => f.action === 'nuevo-codigo').length, 2);
+  assert.equal((await simularAislamiento(admin)).totalFichas, 0);
+  const cuentas = async () => (await admin.auth().listUsers()).users.length;
+  for (let vuelta = 1; vuelta <= 2; vuelta++) { // repetirla tampoco la toca
+    const r = await applyMigration();
+    assert.deepEqual(r.excluidas, ['demo']);
+    assert.equal(r.revisar.length, 0);
+    assert.equal(r.errores.length, 0);
+    assert.equal(r.migradas, vuelta === 1 ? 2 : 0);
+    assert.deepEqual(await leer('demo'), DEMO, 'demo, idéntica: sin código, sin cuenta, sin _rev nuevo');
+    assert.equal(await cuentas(), 2, 'solo las cuentas de las 2 fichas reales');
+    const codes = (await leer('coach_data')).codes;
+    assert.deepEqual(Object.values(codes).map(c => c.client).sort(), ['real1', 'real2']);
+  }
+  for (const cid of ['real1', 'real2']) {
+    const f = await leer(cid);
+    assert.ok(ident.isStrongCode(f.code) && f.authUid && f.authUids.length === 1, cid + ' migrada');
+    await comoCliente(f.code, async cdb => { assert.equal((await getDoc(doc(cdb, 'clients/' + cid))).exists(), true); });
+  }
 });

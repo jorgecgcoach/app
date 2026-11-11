@@ -30,6 +30,17 @@ test('el plan de la copia de ejemplo no revela códigos ni nombres', async funct
   assert.match(formatPlan(plan), /dry-run/);
 });
 
+test('la ficha de pruebas «demo» se excluye del plan: ni código ni cuenta, y no cuenta como cliente', async function () {
+  const dump = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  dump.clients.demo = { name: 'Demo', blocks: [{ id: 'b1' }] };
+  const plan = await planMigration(dump);
+  assert.equal(plan.totalClients, 4);
+  assert.equal(plan.nuevos, 4);
+  assert.equal(plan.excluidas, 1);
+  assert.deepEqual(plan.rows.find(r => r.clientId === 'demo'), { clientId: 'demo', action: 'excluida', reason: 'ficha-de-pruebas' });
+  assert.deepEqual(require('./migrate-client-auth').FICHAS_EXCLUIDAS, ['demo'], 'solo «demo»: ninguna ficha real');
+});
+
 test('la CLI en dry-run termina sin red y sin datos de ejemplo en claro', function () {
   const env = Object.assign({}, process.env);
   delete env.FIRESTORE_EMULATOR_HOST;

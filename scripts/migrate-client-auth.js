@@ -26,6 +26,10 @@ const id = require('../auth/code-identity');
 const CLAIM = 'jcgCliente';        // marca de procedencia en la cuenta (solo la pone el Admin SDK)
 const MARCA = 'migracion-c1';      // _updatedBy de lo que escribe este script (como el guardado seguro)
 const WRITERS_KEEP = 12;
+// Fichas que NO son de clientes reales (pruebas). No reciben código ni cuenta, y la migración no las toca.
+// «demo»: ficha de pruebas confirmada por el entrenador el 11-11-2026.
+const FICHAS_EXCLUIDAS = Object.freeze(['demo']);
+function excluida(cid) { return FICHAS_EXCLUIDAS.indexOf(cid) >= 0; }
 
 function argValue(name) {
   const i = process.argv.indexOf(name);
@@ -65,12 +69,14 @@ async function planMigration(dump) {
   const rows = [];
   for (const cid of Object.keys(dump.clients)) {
     if (cid === 'coach_data') continue;
+    if (excluida(cid)) { rows.push({ clientId: cid, action: 'excluida', reason: 'ficha-de-pruebas' }); continue; }
     const c = dump.clients[cid] || {};
     if (uidsDe(c).length) rows.push({ clientId: cid, action: 'revisar', reason: 'ya-tiene-cuentas' });
     else rows.push({ clientId: cid, action: 'nuevo-codigo', reason: '' });
   }
   return {
-    totalClients: rows.length,
+    excluidas: rows.filter(function (r) { return r.action === 'excluida'; }).length,
+    totalClients: rows.filter(function (r) { return r.action !== 'excluida'; }).length,
     nuevos: rows.filter(function (r) { return r.action === 'nuevo-codigo'; }).length,
     revisar: rows.filter(function (r) { return r.action === 'revisar'; }).length,
     ignoredCoachSecret: !!(dump.meta && dump.meta.coachCode),
@@ -81,7 +87,7 @@ async function planMigration(dump) {
 function formatPlan(plan) {
   const lines = [];
   lines.push('Migración de cuentas de cliente (dry-run). No se ha escrito nada.');
-  lines.push('Fichas de clientes: ' + plan.totalClients);
+  lines.push('Fichas de clientes: ' + plan.totalClients + (plan.excluidas ? ' (más ' + plan.excluidas + ' de pruebas excluida(s): sin código ni cuenta)' : ''));
   lines.push('Recibirán un código aleatorio nuevo y su cuenta: ' + plan.nuevos);
   lines.push('A revisar (ya tienen cuentas vinculadas; no se tocarán): ' + plan.revisar);
   lines.push('Los códigos de hoy no se migran: dejarán de valer cuando se publique la web con cuentas.');
@@ -142,6 +148,7 @@ async function comprobar(admin) {
   const rows = [];
   for (const d of snap.docs) {
     if (d.id === 'coach_data') continue;
+    if (excluida(d.id)) { rows.push({ clientId: d.id, action: 'excluida', reason: 'ficha-de-pruebas' }); continue; }
     const uids = uidsDe(d.data());
     if (enRevision(d.data())) rows.push({ clientId: d.id, action: 'revisar', reason: 'cuentas-aisladas-en-revision' });
     else if (!uids.length) rows.push({ clientId: d.id, action: 'nuevo-codigo', reason: '' });
@@ -185,7 +192,7 @@ async function describirCuenta(admin, cid, uid, apariciones) {
 // Qué haría --aislar AHORA, sin cambiar nada. La huella identifica exactamente el conjunto (ficha, cuenta):
 // aplicar exige pasarla, y si algo cambia entre la simulación y la aplicación, no se aplica nada.
 async function simularAislamiento(admin) {
-  const docs = (await admin.firestore().collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
+  const docs = (await admin.firestore().collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data' && !excluida(d.id); });
   const apariciones = new Map();
   docs.forEach(function (d) { new Set(uidsDe(d.data())).forEach(function (u) { apariciones.set(u, (apariciones.get(u) || 0) + 1); }); });
   const fichas = [];
@@ -240,7 +247,7 @@ async function applyMigration(opciones) {
   const aislar = !!(opciones && opciones.aislar);
   const db = admin.firestore();
   const metaRef = db.collection('clients').doc('coach_data');
-  const r = { mode: mode, migradas: 0, yaHechas: 0, revisar: [], errores: [] };
+  const r = { mode: mode, migradas: 0, yaHechas: 0, excluidas: [], revisar: [], errores: [] };
   // --aislar solo en la PRIMERA ejecución: después, las cuentas creadas desde la app (que no llevan la marca)
   // parecerían dudosas y se les quitaría el acceso por error.
   // Además exige la huella de una simulación previa (--simular-aislar): nunca se aísla nada sin que alguien
@@ -263,6 +270,7 @@ async function applyMigration(opciones) {
   const fichas = (await db.collection('clients').get()).docs.filter(function (d) { return d.id !== 'coach_data'; });
   for (const d of fichas) {
     const cid = d.id;
+    if (excluida(cid)) { r.excluidas.push(cid); continue; } // ficha de pruebas: ni código ni cuenta ni escritura
     try {
       if (enRevision(d.data())) { r.revisar.push({ clientId: cid, motivo: 'cuentas-aisladas-en-revision' }); continue; }
       const uids0 = uidsDe(d.data());
@@ -353,7 +361,8 @@ async function main() {
     const admin = initAdmin(process.env.FIRESTORE_EMULATOR_HOST ? 'emulator' : 'production-read');
     const rows = await comprobar(admin);
     console.log('Estado actual (solo lectura). Código nuevo: ' + rows.filter(x => x.action === 'nuevo-codigo').length +
-      '. Ya migradas: ' + rows.filter(x => x.action === 'hecha').length + '. A revisar: ' + rows.filter(x => x.action === 'revisar').length + '.');
+      '. Ya migradas: ' + rows.filter(x => x.action === 'hecha').length + '. A revisar: ' + rows.filter(x => x.action === 'revisar').length +
+      '. Excluidas (pruebas, sin código ni cuenta): ' + rows.filter(x => x.action === 'excluida').length + '.');
     rows.filter(x => x.action === 'revisar').forEach(x => console.log('! ' + x.clientId + ' ' + x.reason));
     return;
   }
@@ -375,7 +384,7 @@ async function main() {
     throw e;
   }
   console.log('Aplicado (' + r.mode + '). Fichas con código nuevo: ' + r.migradas + '. Ya migradas antes: ' + r.yaHechas +
-    '. A revisar: ' + r.revisar.length + (r.aisladas ? ' (sin acceso hasta revisarlas: ' + r.aisladas + ')' : '') + '. Con error: ' + r.errores.length + '.');
+    '. Excluidas (pruebas): ' + r.excluidas.length + '. A revisar: ' + r.revisar.length + (r.aisladas ? ' (sin acceso hasta revisarlas: ' + r.aisladas + ')' : '') + '. Con error: ' + r.errores.length + '.');
   r.revisar.forEach(function (x) { console.log('! revisar ' + x.clientId + ' (' + x.motivo + '). No se ha tocado: decide a mano.'); });
   r.errores.forEach(function (x) { console.log('! error ' + x.clientId + ' (' + x.codigo + '). Se puede repetir el comando.'); });
   // Nada de esto se escribe en archivos: la salida es solo la pantalla, sin códigos, correos ni uids.
@@ -391,7 +400,8 @@ module.exports = {
   comprobar: comprobar,
   simularAislamiento: simularAislamiento,
   formatSimulacion: formatSimulacion,
-  CLAIM: CLAIM
+  CLAIM: CLAIM,
+  FICHAS_EXCLUIDAS: FICHAS_EXCLUIDAS
 };
 
 if (require.main === module) {

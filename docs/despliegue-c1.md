@@ -137,6 +137,8 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 
 ## Migración: garantías
 
+**Fichas excluidas** (`FICHAS_EXCLUIDAS` en `scripts/migrate-client-auth.js`): `demo`, ficha de pruebas confirmada por el entrenador el 11-11-2026. No recibe código ni cuenta, la migración no la escribe y no cuenta en el aislamiento. No se borra. Ensayo P4 del 11-11-2026 (solo lectura): 24 fichas, **23 cuentas reales** a crear, 1 excluida, 0 a revisar. Prueba: `scripts/conservacion-emulador.test.js`.
+
 - **Códigos nuevos, aleatorios:** 12 símbolos de base32 Crockford generados con el generador criptográfico (60 bits). Ningún código de hoy se reutiliza ni se le añade un sufijo; los antiguos se quitan de `coach_data.codes` y dejan de servir. Los códigos no se imprimen: se ven en la app del entrenador.
 - **No se fía de ninguna cuenta que ya exista.** El alta de Firebase es pública, así que una cuenta previa pudo crearla cualquiera:
   - ficha que ya trae `authUid`/`authUids` y alguna cuenta no lleva la marca `jcgCliente` de **esa** ficha (marca que solo puede poner el Admin SDK) o tiene otro proveedor → **a revisar**, sin tocarla;

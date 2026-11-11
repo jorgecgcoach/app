@@ -20,8 +20,18 @@ service cloud.firestore {
       );
     }
 
+
+    // GUARDIA _rev (la que tiene producción desde el 2026-11-07): solo se acepta la escritura del guardado
+    // seguro, con _rev exactamente el anterior + 1. Una pestaña o app antigua que escribe datos viejos se rechaza.
+    function revOk() {
+      return resource == null
+        ? request.resource.data.get('_rev', 0) == 1
+        : request.resource.data.get('_rev', -1) == resource.data.get('_rev', 0) + 1;
+    }
+
     match /clients/{clientId} {
-      allow read, write: if true;
+      allow read, delete: if true;
+      allow create, update: if revOk();
     }
 
     match /catalog/{docId} {

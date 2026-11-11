@@ -35,6 +35,14 @@ service cloud.firestore {
       );
     }
 
+    // GUARDIA _rev (la que tiene producción desde el 2026-11-07): solo se acepta la escritura del guardado
+    // seguro, con _rev exactamente el anterior + 1. Una pestaña o app antigua que escribe datos viejos se rechaza.
+    function revOk() {
+      return resource == null
+        ? request.resource.data.get('_rev', 0) == 1
+        : request.resource.data.get('_rev', -1) == resource.data.get('_rev', 0) + 1;
+    }
+
     // coach_data no lleva authUid. Un where('authUid') no puede alcanzarlo
     // y un cliente no puede hacerse dueño de la meta del entrenador.
     function coachMetaWriteOk(clientId) {
@@ -70,12 +78,13 @@ service cloud.firestore {
         && (!changed.hasAny(['notifs']) || !('notifs' in resource.data));
     }
 
+
     match /clients/{clientId} {
       allow get, list: if isCoach() || ownsClient();
 
-      allow create: if isCoach() && coachMetaWriteOk(clientId);
+      allow create: if isCoach() && coachMetaWriteOk(clientId) && revOk();
 
-      allow update: if coachMetaWriteOk(clientId) && (
+      allow update: if coachMetaWriteOk(clientId) && revOk() && (
         isCoach()
         || (ownsClient() && ownersUnchanged() && clientFieldsOk())
       );

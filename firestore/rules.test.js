@@ -50,17 +50,20 @@ test.beforeEach(async function () {
     await setDoc(doc(db, 'clients/coach_data'), {
       coachCode: '0000',
       codes: { 'DEMO-1234': { client: 'client-a' } },
-      negocio: { payments: [], contracts: [], contacts: [{ id: 1, nombre: 'Lead Ejemplo' }] }
+      negocio: { payments: [], contracts: [], contacts: [{ id: 1, nombre: 'Lead Ejemplo' }] },
+      _rev: 1
     });
     await setDoc(doc(db, 'clients/client-a'), {
       name: 'Cliente Ejemplo A',
       authUid: 'uid-a',
-      push: { enabled: false, tokens: ['token-ficticio-a'] }
+      push: { enabled: false, tokens: ['token-ficticio-a'] },
+      _rev: 1
     });
     await setDoc(doc(db, 'clients/client-b'), {
       name: 'Cliente Ejemplo B',
       authUid: 'uid-b',
-      push: { enabled: false, tokens: ['token-ficticio-b'] }
+      push: { enabled: false, tokens: ['token-ficticio-b'] },
+      _rev: 1
     });
     await setDoc(doc(db, 'contacts/ct_1'), {
       id: 1,
@@ -87,7 +90,8 @@ test('el entrenador con claim role=coach lee y escribe coach_data y contactos', 
   await assertSucceeds(setDoc(doc(db, 'clients/coach_data'), {
     coachCode: '0000',
     codes: {},
-    negocio: { contacts: [] }
+    negocio: { contacts: [] },
+    _rev: 2
   }));
   const contact = await assertSucceeds(getDoc(doc(db, 'contacts/ct_1')));
   assert.equal(contact.get('nombre'), 'Lead Ejemplo');
@@ -119,7 +123,10 @@ test('el cliente A lee y escribe su ficha, no la de B ni coach_data', async func
   const own = await assertSucceeds(getDoc(doc(db, 'clients/client-a')));
   assert.equal(own.get('name'), 'Cliente Ejemplo A');
   assert.equal(own.get('push').tokens[0], 'token-ficticio-a');
-  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true }));
+  // Guardia _rev: sin _rev, o con un _rev viejo (datos de otra pestaña), no se escribe.
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true }));
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true, _rev: 1 }));
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true, _rev: 2 }));
   await assertFails(getDoc(doc(db, 'clients/client-b')));
   await assertFails(getDoc(doc(db, 'clients/coach_data')));
   await assertFails(updateDoc(doc(db, 'clients/client-b'), { name: 'no' }));
@@ -163,7 +170,7 @@ test('cliente con varios códigos (authUids): su segunda cuenta lee, consulta y 
   });
   const db = fsdb(testEnv.authenticatedContext('uid-a2'));
   await assertSucceeds(getDoc(doc(db, 'clients/client-a')));
-  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true }));
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { fichasDone: true, _rev: 2 }));
   const snap = await assertSucceeds(getDocs(query(collection(db, 'clients'), where('authUids', 'array-contains', 'uid-a2'))));
   assert.deepEqual(snap.docs.map(function (d) { return d.id; }), ['client-a']);
   await assertFails(getDoc(doc(db, 'clients/client-b')));

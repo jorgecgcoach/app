@@ -18,7 +18,7 @@ async function sembrar() {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async ctx => {
     const db = ctx.firestore();
-    await setDoc(doc(db, 'clients/coach_data'), { coachCode: 'PIN-FICTICIO', codes: { 'COD-A': { client: 'client-a' } }, negocio: { contacts: [] } });
+    await setDoc(doc(db, 'clients/coach_data'), { coachCode: 'PIN-FICTICIO', codes: { 'COD-A': { client: 'client-a' } }, negocio: { contacts: [] }, _rev: 1 });
     await setDoc(doc(db, 'clients/client-a'), { name: 'Cliente Ficticio A', code: 'COD-A', authUid: 'uid-a', pagos: [{ id: 1 }], mods: { semana: true }, serviceType: 't', notifs: {}, blocks: [], _rev: 1 });
     await setDoc(doc(db, 'clients/client-b'), { name: 'Cliente Ficticio B', authUid: 'uid-b', _rev: 1 });
     await setDoc(doc(db, 'contacts/ct_1'), { nombre: 'Contacto Ficticio' });
@@ -67,8 +67,10 @@ test('entrenador: todo, y coach_data sigue sin admitir dueño', async () => {
   const db = coach();
   await assertSucceeds(getDoc(doc(db, 'clients/coach_data')));
   await assertSucceeds(getDocs(collection(db, 'clients')));
-  await assertSucceeds(setDoc(doc(db, 'clients/nuevo'), { name: 'Nuevo Ficticio' }));
-  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { pagos: [], blocks: [{ id: 'b2' }] }));
+  await assertFails(setDoc(doc(db, 'clients/nuevo'), { name: 'Nuevo Ficticio' }), 'sin _rev no se crea');
+  await assertSucceeds(setDoc(doc(db, 'clients/nuevo'), { name: 'Nuevo Ficticio', _rev: 1 }));
+  await assertFails(updateDoc(doc(db, 'clients/client-a'), { pagos: [], blocks: [{ id: 'b2' }] }), 'sin _rev no se guarda');
+  await assertSucceeds(updateDoc(doc(db, 'clients/client-a'), { pagos: [], blocks: [{ id: 'b2' }], _rev: 2 }));
   await assertSucceeds(getDoc(doc(db, 'contacts/ct_1')));
   await assertFails(updateDoc(doc(db, 'clients/coach_data'), { authUid: 'uid-a' }));
 });

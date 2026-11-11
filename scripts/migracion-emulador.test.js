@@ -171,7 +171,9 @@ test('con las reglas estrictas: cada cliente solo su ficha, y no puede cambiar s
     await assert.rejects(getDoc(doc(cdb, 'clients/coach_data')));
     await assert.rejects(updateDoc(doc(cdb, 'clients/c2'), { authUids: [uid, 'otro'] }));
     await assert.rejects(updateDoc(doc(cdb, 'clients/c2'), { code: 'OTRO' }));
-    await updateDoc(doc(cdb, 'clients/c2'), { blocks: (await getDoc(doc(cdb, 'clients/c2'))).data().blocks });
+    const actual = (await getDoc(doc(cdb, 'clients/c2'))).data();
+    await assert.rejects(updateDoc(doc(cdb, 'clients/c2'), { blocks: actual.blocks }), 'sin _rev no se guarda');
+    await updateDoc(doc(cdb, 'clients/c2'), { blocks: actual.blocks, _rev: actual._rev + 1 });
   });
   const v = await verificarVinculos(admin);
   assert.deepEqual(v.problemas, []);

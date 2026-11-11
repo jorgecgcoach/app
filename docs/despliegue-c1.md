@@ -12,6 +12,8 @@ Procedimiento para activar el acceso con cuenta (Firebase Auth) y las reglas est
 | `firestore.congelado.rules` | **Parada de emergencia.** Si la app de los clientes escribe algo mal y hay que pararlo ya. | Solo leen su ficha; no escriben nada. Lo que guarden queda en su dispositivo y se sube al volver a las definitivas. | Nada |
 | `firestore.transicion.rules` | Fichas abiertas como hoy + catálogo. **No se usa**; solo referencia. | — | Todo, como hoy |
 
+**Guardia `_rev` en las tres** (añadida el 11-11-2026): producción tiene desde el 07-11-2026 una regla que solo acepta escrituras en `clients/*` con `_rev` = anterior + 1, para que una pestaña o app con datos viejos no sobrescriba lo nuevo. Las reglas de C1 no la tenían: publicarlas la habría quitado. Ahora la llevan las definitivas, la parada y la de transición. Pruebas: `firestore/rules.test.js`, `firestore/congelado.test.js`, `scripts/conservacion-emulador.test.js`.
+
 Ya no hay «reglas de rescate» que dejen al cliente cambiar cualquier campo de su ficha (ver «Campos del entrenador»).
 
 Todas se generan con el UID real en `reglas-despliegue/` (ignorada por git) y se prueban así en el emulador:
@@ -42,7 +44,7 @@ Lo que el cliente sí puede cambiar de su ficha y no es suyo: el programa dentro
 
 | # | Paso | Quién | Comprobación |
 | --- | --- | --- | --- |
-| P1 | Copia completa real, cifrada, en el PC y en el USB, verificada. | Tú en el PC (asistente de claves) y yo con tu autorización | `copia:verificar` sin problemas en las dos copias. |
+| P1 | Copia completa real, cifrada, en el PC y en el USB, verificada. | **Hecha el 10-11-2026 21:56** (`copias-c16-11-10_215547.jcgenc` y duplicado en el USB, idénticos). Se repite en F1. | `copia-cifrada.js comprobar` en las dos. |
 | P2 | Proveedores de Auth activos (Google, Correo/contraseña), `jorgecgcoach.github.io` autorizado, protección de enumeración de correos. | Hecho el 10-11-2026 | — |
 | P3 | Reglas generadas y probadas con el UID real. | Yo | Huellas anotadas. |
 | P4 | Ensayo de la migración con la copia: `node scripts/migrate-client-auth.js --backup <copia>` (no escribe nada). | Tú, conmigo | Dice «dry-run», cuántas fichas recibirán código nuevo y cuáles irían «a revisar», sin datos personales. |
@@ -81,9 +83,9 @@ Los clientes **cambian de código**: los de hoy (a menudo un documento de identi
 
 | # | Paso | Tiempo |
 | --- | --- | --- |
-| F1 | Copia de la app («🛟 Copia → Descargar copia ahora») justo antes. `node scripts/verificar-vinculos.js --proyecto-real` (solo lee): anotar si alguna ficha ya trae cuentas (no debería). | 3 min |
+| F1 | **[Autorización]** Copia completa real cifrada justo antes (solo lectura, con `copias-lector`): `node scripts/copia-completa.js --proyecto-real --destino C:JorgeCGCoach-recuperacioncopias-c1 --duplicar D:JorgeCGCoach-Backup --cifrar C:JorgeCGCoach-recuperacionclaves-copiasclave-publica.json` (rama `copias/copia-real`). Comprobar que dice ÍNTEGRA y que los recuentos no bajan respecto a la anterior. Además, copia de la app («🛟 Copia → Descargar copia ahora»). `node scripts/verificar-vinculos.js --proyecto-real` (solo lee): anotar si alguna ficha ya trae cuentas (no debería). | 3 min |
 | F2 | Cerrar la app del entrenador en **todos** los dispositivos (para que ninguno vuelva a escribir la lista de códigos antigua). | 1 min |
-| F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true` y, con la opción C ya desplegada, `ALTAS_SERVIDOR = true`; ver `docs/altas-servidor.md`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
+| F3 | **[Autorización]** Fusionar el PR #11 en `main` (web con `AUTH_ENABLED = true`. **Camino mínimo, sin Blaze:** `ALTAS_SERVIDOR = false`, las altas se hacen desde el navegador del entrenador. La opción C, `ALTAS_SERVIDOR = true`, solo si antes se ha desplegado; ver `docs/altas-servidor.md`). Esperar a que GitHub Pages la publique y comprobar byte a byte. Anotar ese commit como «última web buena con Auth». | 5–10 min |
 | F4 | **[Autorización]** Enseguida, reglas definitivas de Firestore y Storage. Al desplegar Storage, comprobar antes la identidad exacta del agente de servicio y conceder solo el rol de P5. | 3 min |
 | F5 | **[Autorización]** Migración. 1) `node scripts/migrate-client-auth.js --comprobar` y `--simular-aislar` (las dos solo leen): el informe dice cuántas fichas y cuentas perderían el acceso, por qué, y una huella. 2) **Revisas el informe y decides.** 3) Con tu «sí», `--apply` con `ALLOW_AUTH_MIGRATION_APPLY=yes`, y solo si apruebas aislar, `--aislar --confirmar-aislar=<huella>` (decisión D2: sin la huella, o si algo cambió desde la simulación, no se aísla nada; solo vale en la primera ejecución). **Después de F4, nunca antes:** con las reglas abiertas cualquiera podría leer los códigos nuevos. Luego `verificar-vinculos.js --proyecto-real`: 0 problemas. Con `--aislar`, las fichas «a revisar» se quedan sin acceso hasta decidir a mano. | 5 min |
 | F6 | Entrenador: entrar con Google en el ordenador, crear la contraseña de respaldo («🛟 Copia → 🔐 Acceso de respaldo»). Abrir «Código de acceso» de cada cliente y entregarle su código nuevo. | 10 min + entregas |

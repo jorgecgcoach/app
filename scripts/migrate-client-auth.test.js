@@ -15,17 +15,30 @@ test('el plan de la copia de ejemplo no revela códigos ni nombres', async funct
   const dump = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
   const plan = await planMigration(dump);
   assert.equal(plan.totalClients, 4);
-  assert.equal(plan.withCode, 3);
-  assert.equal(plan.withoutCode, 1);
+  assert.equal(plan.nuevos, 4, 'todas reciben código aleatorio nuevo; los de hoy no se migran');
+  assert.equal(plan.revisar, 0);
   assert.equal(plan.ignoredCoachSecret, true);
-  const creates = plan.rows.filter(function (r) { return r.action === 'create'; });
-  assert.equal(creates.length, 3);
-  assert.equal(creates.filter(function (r) { return r.dniLike; }).length, 1);
+  // Una ficha que ya trae cuentas vinculadas se marca para revisar, sin tocarla.
+  const otra = JSON.parse(JSON.stringify(dump));
+  otra.clients['c-ejemplo-2'].authUids = ['uid-desconocido'];
+  const p2 = await planMigration(otra);
+  assert.deepEqual(p2.rows.filter(r => r.action === 'revisar').map(r => r.clientId), ['c-ejemplo-2']);
   const text = JSON.stringify(plan) + '\n' + formatPlan(plan);
   SECRET_BITS.forEach(function (bit) {
     assert.equal(text.includes(bit), false, 'no debería aparecer: ' + bit);
   });
   assert.match(formatPlan(plan), /dry-run/);
+});
+
+test('la ficha de pruebas «demo» se excluye del plan: ni código ni cuenta, y no cuenta como cliente', async function () {
+  const dump = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+  dump.clients.demo = { name: 'Demo', blocks: [{ id: 'b1' }] };
+  const plan = await planMigration(dump);
+  assert.equal(plan.totalClients, 4);
+  assert.equal(plan.nuevos, 4);
+  assert.equal(plan.excluidas, 1);
+  assert.deepEqual(plan.rows.find(r => r.clientId === 'demo'), { clientId: 'demo', action: 'excluida', reason: 'ficha-de-pruebas' });
+  assert.deepEqual(require('./migrate-client-auth').FICHAS_EXCLUIDAS, ['demo'], 'solo «demo»: ninguna ficha real');
 });
 
 test('la CLI en dry-run termina sin red y sin datos de ejemplo en claro', function () {
@@ -71,5 +84,5 @@ test('el flag de la app sigue apagado y las reglas siguen con el marcador', func
   assert.match(html, /function loadCoachDataAfterAuth\(/);
   assert.match(html, /function loadClientAfterAuth\(/);
   assert.match(rules, /REEMPLAZAR_UID_DEL_COACH/);
-  assert.match(rules, /request\.auth\.token\.role == 'coach'/);
+  assert.match(rules, /request\.auth\.token\.get\('role', ''\) == 'coach'/);
 });

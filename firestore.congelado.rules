@@ -1,0 +1,70 @@
+rules_version = '2';
+// PARADA DE EMERGENCIA (C1). NO DESPLEGAR sin autorización. Solo con firestore.rules ya en producción.
+// Se usa si la app de los clientes escribe algo mal (p. ej. un fallo que vacía datos) y hay que
+// pararlo YA, sin volver a abrir la base:
+// - Nadie sin sesión lee ni escribe nada.
+// - Entrenador: igual que en firestore.rules (todo).
+// - Cliente: SOLO LEE su ficha y el catálogo. No escribe nada. Lo que guarde mientras tanto queda en su
+//   dispositivo (diario del guardado seguro) y se sube al volver a firestore.rules.
+// Sustituye a las antiguas «reglas de rescate», que dejaban al cliente cambiar cualquier campo de su
+// ficha (nombre, código, pagos, módulos…). La causa de bloqueo que las justificaba (rellenos por defecto
+// de la app) se corrige en la app: shared/campos-cliente.js.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isCoach() {
+      return signedIn() && (
+        request.auth.token.get('role', '') == 'coach'
+        || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
+      );
+    }
+
+    function coachMetaWriteOk(clientId) {
+      return clientId != 'coach_data'
+        || (!('authUid' in request.resource.data) && !('authUids' in request.resource.data));
+    }
+
+    function ownsClient() {
+      return signedIn() && (
+        resource.data.get('authUid', null) == request.auth.uid
+        || request.auth.uid in resource.data.get('authUids', [])
+      );
+    }
+
+
+    // GUARDIA _rev (la que tiene producción desde el 2026-11-07): solo se acepta la escritura del guardado
+    // seguro, con _rev exactamente el anterior + 1. Una pestaña o app antigua que escribe datos viejos se rechaza.
+    function revOk() {
+      return resource == null
+        ? request.resource.data.get('_rev', 0) == 1
+        : request.resource.data.get('_rev', -1) == resource.data.get('_rev', 0) + 1;
+    }
+
+    match /clients/{clientId} {
+      allow get, list: if isCoach() || ownsClient();
+      allow create, update: if isCoach() && coachMetaWriteOk(clientId) && revOk();
+      allow delete: if isCoach();
+    }
+
+    match /contacts/{contactId} {
+      allow read, write: if isCoach();
+    }
+
+    match /catalog/{docId} {
+      allow get: if signedIn() && docId == 'exercises';
+      allow create, update: if isCoach() && docId == 'exercises'
+        && request.resource.data.keys().hasOnly(['items', 'count', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 3000;
+      allow delete: if isCoach();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

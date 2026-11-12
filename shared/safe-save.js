@@ -242,7 +242,7 @@
      del destino es el que había en la base (o ya es el valor nuevo). Si no,
      se apunta como conflicto: quien llama decide no escribir.
      --------------------------------------------------------------------- */
-  function applyOps(target, ops) {
+  function applyOps(target, ops, esRelleno) {
     let doc = clone(target === undefined || target === null ? {} : target);
     const conflicts = [];
     const conflict = (op, why) => conflicts.push({ path: pathLabel(op.p), why });
@@ -264,7 +264,9 @@
       const last = op.p[op.p.length - 1];
       const cur = child(parent.node, last);
       if (!cur.ok) { conflict(op, 'estructura distinta en otro dispositivo'); continue; }
-      if (!(deepEqual(cur.node, op.b) || deepEqual(cur.node, op.a))) {
+      // esRelleno (solo recover): el valor de aquí es relleno que la app puso al cargar y que nunca estuvo en
+      // la nube; no es un cambio de otro dispositivo, así que lo pendiente del journal puede ocupar su sitio.
+      if (!(deepEqual(cur.node, op.b) || deepEqual(cur.node, op.a) || (esRelleno && esRelleno(op, cur.node)))) {
         conflict(op, 'cambiado en otro dispositivo');
         continue;
       }
@@ -767,7 +769,11 @@
         const w = st(entry.id).serverWriters || [];
         let own = null;
         for (let i = entry.own.length - 1; i >= 0 && !own; i--) if (w.indexOf(entry.own[i].tag) >= 0) own = entry.own[i];
-        const merged = applyOps(local, own ? own.ops : entry.ops);
+        // Lo que esta carga rellenó por defecto (markDefaults/absorb) no choca con lo pendiente: p. ej. una
+        // versión anterior de la app guardó en su journal tracking=[] y esta acaba de rellenar tracking={}.
+        const ab = st(entry.id).absorbed;
+        const esRelleno = (op, actual) => !!(ab && ab.get(pathLabel(op.p)) === JSON.stringify(actual));
+        const merged = applyOps(local, own ? own.ops : entry.ops, esRelleno);
         if (merged.conflicts.length) {
           st(entry.id).blocked = merged.conflicts;
           status(entry.id, 'conflict', merged.conflicts);
@@ -857,6 +863,9 @@
       heartbeat: journal.heartbeat,
       orphans: journal.orphans,
       isKnown: id => st(id).known,
+      // Última versión conocida de la nube (solo lectura; la app del cliente la usa para no enviar
+      // cambios en los campos que solo decide el entrenador: shared/campos-cliente.js).
+      baseOf: id => st(id).base,
       isBlocked: id => !!st(id).blocked,
       blockedInfo: id => st(id).blocked,
       ids: () => Array.from(states.keys()),
@@ -871,6 +880,6 @@
     };
   }
 
-  const VERSION = '20261109-instantaneas';
+  const VERSION = '20261112-c1-relleno';
   return { VERSION, diffDocs, applyOps, merge3, deepEqual, clone, stripSync, patchInPlace, arrayKey, createSync, createJournal, pathLabel, SYNC_FIELDS };
 });

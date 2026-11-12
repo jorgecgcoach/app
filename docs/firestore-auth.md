@@ -8,7 +8,7 @@ No despliegues estas reglas ni cambies el flag hasta el checklist de abajo, hech
 
 Plan Spark, sin Cloud Functions y sin coste nuevo.
 
-- **Cliente.** Sigue entrando solo con el código que el entrenador le asigna (a menudo un documento de identidad). No hay email ni contraseña nuevos en pantalla. Al guardar el código, la app del entrenador crea una cuenta de Firebase Auth en un segundo inicio (así no se cierra la sesión del entrenador). El email es un hash del código (`auth/code-identity.js`), no el código en claro. La contraseña es el código más un sufijo público `Jcg#1`, solo para llegar al mínimo de 6 caracteres de Auth. El sufijo no es un secreto: está en la app.
+- **Cliente.** Sigue entrando solo con un código que le da el entrenador, pero con Auth ese código es **aleatorio** (12 símbolos, `XXXX-XXXX-XXXX`, botón 🎲); ya no vale uno elegido a mano ni un documento de identidad. No hay email ni contraseña nuevos en pantalla. Al guardar el código, la app del entrenador crea una cuenta de Firebase Auth en un segundo inicio (así no se cierra la sesión del entrenador). El email es un hash del código (`auth/code-identity.js`), no el código en claro. La contraseña es el código más un sufijo público `Jcg#1`, solo para llegar al mínimo de 6 caracteres de Auth. El sufijo no es un secreto: está en la app.
 - **Entrenador.** Con el flag encendido entra con Google, no con el PIN. Un PIN corto se puede probar; la cuenta de Google no. Las reglas lo reconocen por el custom claim `role == 'coach'` o por su UID en `firestore.rules`.
 - **Reglas.** Un cliente solo lee y escribe la ficha cuyo `authUid` es el suyo. `clients/coach_data` (códigos, negocio, contratos, CRM, tokens push del entrenador) solo lo lee el entrenador. La comprobación del código ya no descarga la lista de códigos. Los tokens push van dentro del documento: Firestore no esconde campos sueltos, así que quien puede leer la ficha ve su token, y nadie más.
 - **Sesión.** `firebase.auth.Auth.Persistence.LOCAL`. La siguiente apertura no vuelve a pedir el código mientras la sesión siga en el dispositivo.
@@ -36,13 +36,7 @@ Recomendación: cuentas sintéticas ahora. Functions más adelante solo si se ac
 
 ### Códigos fáciles de adivinar
 
-Un documento de identidad de 8 dígitos (o 8 dígitos y una letra) se puede probar. Firebase frena los intentos seguidos desde la misma red, pero no convierte ese código en un secreto fuerte. El email de la cuenta es un hash: no sale el documento en la lista de usuarios de Auth, y un listado de emails tampoco sirve sin el código.
-
-Mitigación, sin obligar a cambiar los códigos que ya funcionan:
-
-- Al guardar un código que parece un documento sin nada más, la app (solo con el flag encendido) pregunta si se guarda igual. Se puede confirmar y dejarlo.
-- Se puede añadir un sufijo que solo conozcan el entrenador y el cliente, por ejemplo `-7K`. El cliente lo escribe junto al código, como siempre. Tres caracteres extra de un alfabeto de unas 30 letras multiplican por unos 30.000 los intentos.
-- Los códigos actuales siguen siendo válidos. No hace falta una tanda de cambios.
+Un documento de identidad se puede probar, y Firebase solo frena intentos por IP (no por cuenta). Decisión del 11-11-2026: **con Auth solo valen códigos aleatorios** de 60 bits generados con el generador criptográfico del navegador o de Node (`generateClientCode` en `auth/code-identity.js`); sin sufijos. La app rechaza cualquier otro código con Auth encendido, y la migración da a cada ficha uno nuevo. Al escribirlo da igual mayúsculas, espacios o guiones, y O/I/L se leen como 0/1. Detalle y números en [`despliegue-c1.md`](despliegue-c1.md#adivinar-códigos-límites-y-protecciones).
 
 ## Tiempos de login
 
@@ -97,42 +91,16 @@ Hazlo en este orden, el día del corte, después de revisar el PR. Hasta el paso
 })();
 ```
 
-4. **Reglas en local (1 min).** En `firestore.rules`, sustituye `REEMPLAZAR_UID_DEL_COACH` por ese UID. No despliegues todavía. El claim `role == 'coach'` es opcional y solo se puede poner con el Admin SDK; la allowlist basta.
-5. **Ensayo de la migración (2 min).** Desde la raíz del repo, con Node 18 o superior:
+4. **Reglas con el UID, sin publicarlo (1 min).** El repositorio es público: el UID real **no** va a git, que lleva siempre el marcador `REEMPLAZAR_UID_DEL_COACH`.
+   - Escribe el UID en `config/uid-entrenador.txt` (una línea; ignorado por git).
+   - `npm run reglas:preparar` genera en `reglas-despliegue/` (ignorada) las tres reglas con el UID, un `firebase.json` que despliega solo reglas y `huellas.txt`.
+   - `npm run test:reglas-despliegue` pasa todas las pruebas de reglas contra esos archivos generados (comprueba también que no queda ningún marcador y que un UID casi igual no entra).
+   - Para desplegar, **solo** desde esa carpeta: `firebase deploy --only firestore:rules,storage --config reglas-despliegue/firebase.json`. Nunca desde la raíz: ahí están las reglas con el marcador y el entrenador se quedaría sin acceso.
+   - El claim `role == 'coach'` es opcional y solo se puede poner con el Admin SDK; el UID basta.
+5. **Ensayo de la migración (2 min).** Desde la raíz del repo, con Node 18 o superior: `npm install` y `node scripts/migrate-client-auth.js --backup ruta/de/la-copia.json`. Tiene que decir `dry-run` y `No se ha escrito nada`; no imprime códigos ni nombres. Dice cuántas fichas recibirán código nuevo y cuáles habría que revisar (fichas que ya traen cuentas).
+6. **Corte y migración.** El orden cambió: primero la web con Auth, enseguida las reglas definitivas y **después** la migración (`--comprobar` y `--apply`), con la app del entrenador cerrada. Antes de las reglas, los códigos nuevos serían legibles por cualquiera. Pasos exactos, tiempos y vuelta atrás en [`docs/despliegue-c1.md`](despliegue-c1.md). La credencial de servicio se pasa con `GOOGLE_APPLICATION_CREDENTIALS` y nunca se commitea; sin `ALLOW_AUTH_MIGRATION_APPLY=yes` el script no escribe en el proyecto real.
 
-```bash
-npm install
-node scripts/migrate-client-auth.js --backup ruta/de/la-copia.json
-```
-
-Tiene que decir `dry-run` y `No se ha escrito nada`. No imprime códigos ni nombres. Revisa cuántas cuentas se crearían y cuántos códigos parecen un documento sin sufijo. Esos se pueden dejar.
-6. **Crear las cuentas (2 min).** Sigue con las reglas de producción abiertas. Usa la cuenta de servicio que ya tiene el aviso diario. El JSON no se commitea.
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/ruta/fuera/del/repo/service-account.json
-export ALLOW_AUTH_MIGRATION_APPLY=yes
-node scripts/migrate-client-auth.js --backup ruta/de/la-copia.json --apply
-```
-
-Sin `ALLOW_AUTH_MIGRATION_APPLY=yes` el script sale y no escribe en el proyecto real. Contra los emuladores solo escribe si `FIRESTORE_EMULATOR_HOST` y `FIREBASE_AUTH_EMULATOR_HOST` están definidos. Borra el JSON del disco cuando acabes. El campo `authUid` se añade a cada ficha; el resto no se toca. La web vieja lo ignora.
-7. **Corte, el mismo rato (3 min).** Primero la web nueva, enseguida las reglas. Si despliegas las reglas antes, la web actual deja de cargar porque lee `coach_data` sin Auth.
-   - Cambia `const AUTH_ENABLED=false` a `true`, publica `main` (GitHub Pages).
-   - Enseguida: `npx firebase deploy --only firestore:rules --project appjorgecgcoach`
-   - Entra tú con Google. Un cliente de prueba entra con su código de siempre. Comprueba que no ve el negocio ni otra ficha.
-   - Deja `CONTACTS_COLLECTION` en false salvo que ya quieras la copia del CRM.
-
-Si algo falla, vuelve a publicar las reglas abiertas (es el estado de hoy) y pon otra vez `AUTH_ENABLED` en false:
-
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /clients/{clientId} {
-      allow read, write: if true;
-    }
-  }
-}
-```
+Si algo falla, **no** se vuelven a publicar reglas abiertas. El procedimiento completo, con la ventana y la vuelta atrás que mantiene la base cerrada (parada `firestore.congelado.rules`, reactivar cuentas, contraseña de respaldo), está en [`docs/despliegue-c1.md`](despliegue-c1.md), que sustituye a este paso 6.
 
 Los avisos de GitHub Actions usan la cuenta de servicio y no pasan por estas reglas. Siguen igual.
 
@@ -144,6 +112,6 @@ npm test
 
 Eso levanta el emulador de Firestore del proyecto ficticio `demo-appjorgecgcoach` y corre la identidad del código, las reglas y el dry-run. Cubre: anónimo no lee `coach_data`; el entrenador (claim o UID marcador) sí; el cliente A no lee al B, ni el meta, ni `contacts`; la consulta por `authUid` devuelve solo su ficha; `coach_data` no admite `authUid`.
 
-El `--apply` contra los emuladores (datos de `scripts/fixtures/backup.sample.json`, todos ficticios) crea las cuentas y escribe `authUid`. No lo uses con una copia real salvo el paso 6, y nunca contra `main` desde un agente.
+`npm run test:migracion` ejecuta la migración de verdad contra los emuladores de Auth y Firestore con datos ficticios: códigos nuevos, cuentas con su marca, fichas dudosas a revisar sin tocarlas, repetición y fallo parcial.
 
 Con el flag en false, abre la web y entra como siempre: el cliente con su código y el entrenador con el suyo. No aparece “Entrar con Google”.

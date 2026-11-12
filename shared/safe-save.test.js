@@ -1676,3 +1676,56 @@ test('IV5 con cortes de conexión, cierre y reapertura, y avisos desordenados: n
   assert.deepEqual(nube['ex1|0'], { kg: 60, reps: 8 });
   assert.equal(conflictos(a).length + conflictos(n).length, 0);
 });
+
+test('móvil con la versión anterior y series sin subir: al entrar con la nueva se recuperan solas aunque esta rellene campos por defecto', async () => {
+  // Caso de la publicación de C1 (probado también en el navegador con el emulador): la versión anterior guardó en
+  // su journal la serie y campos que rellenó al pintar (tracking=[]), que la nube no tiene; la nueva, al cargar,
+  // rellena ese campo con otro valor por defecto (tracking={}). Eso no es un cambio de otro dispositivo.
+  const srv = fakeServer();
+  const c = clienteFicticio(); delete blk(c).tracking; srv.put('cli1', c);
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const vieja = device(srv, 'versionAnterior', { storage, clock });
+  vieja.load('cli1'); vieja.sync.heartbeat();
+  srv.online = false; // con las reglas cerradas la versión anterior no puede guardar
+  blk(vieja.local.cli1).tracking = [];
+  blk(vieja.local.cli1).log['ex9|1'] = { kg: '72.5', done: true };
+  await vieja.sync.save('cli1');
+  srv.online = true;
+  // La migración toca la ficha entre medias (código y cuenta nuevos).
+  const m = srv.get('cli1'); m.code = 'NUEVO-FICTICIO'; m.authUid = 'u-ficticio'; srv.put('cli1', m);
+  clock.t += 60_000;
+  const nueva = device(srv, 'versionNueva', { storage, clock });
+  nueva.load('cli1');
+  blk(nueva.local.cli1).tracking = {}; // relleno de ensureData al cargar
+  nueva.sync.markDefaults(['cli1']);
+  const rep = nueva.sync.recover(['cli1']);
+  assert.deepEqual(rep.map(x => x.ok), [true], 'sin conflicto');
+  await tick(); await tick();
+  await nueva.sync.save('cli1');
+  const final = srv.get('cli1');
+  assert.deepEqual(blk(final).log['ex9|1'], { kg: '72.5', done: true }, 'la serie pendiente llega a la nube');
+  assert.equal(final.code, 'NUEVO-FICTICIO', 'no toca lo que hizo la migración');
+  assert.equal(final.authUid, 'u-ficticio');
+  assert.equal(nueva.sync.pendingOps('cli1').length, 0);
+});
+
+test('un valor por defecto no tapa un conflicto real: si la nube SÍ tiene otro valor, sigue siendo conflicto', async () => {
+  const srv = fakeServer();
+  const c = clienteFicticio(); delete blk(c).tracking; srv.put('cli1', c);
+  const storage = memStorage();
+  const clock = { t: 1_000_000 };
+  const vieja = device(srv, 'versionAnterior', { storage, clock });
+  vieja.load('cli1'); vieja.sync.heartbeat();
+  srv.online = false;
+  blk(vieja.local.cli1).tracking = [{ date: '2026-11-10', peso: '80' }];
+  await vieja.sync.save('cli1');
+  srv.online = true;
+  const d = srv.get('cli1'); blk(d).tracking = [{ date: '2026-11-11', peso: '79' }]; srv.put('cli1', d); // otro dispositivo
+  clock.t += 60_000;
+  const nueva = device(srv, 'versionNueva', { storage, clock });
+  nueva.load('cli1');
+  nueva.sync.markDefaults(['cli1']);
+  assert.deepEqual(nueva.sync.recover(['cli1']).map(x => x.ok), [false]);
+  assert.deepEqual(blk(srv.get('cli1')).tracking, [{ date: '2026-11-11', peso: '79' }]);
+});

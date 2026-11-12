@@ -1,0 +1,21 @@
+{
+  "_comentario": "SOLO para probar las funciones de C1 (opción C) en emuladores, proyecto demo-. No se usa para desplegar.",
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "c1",
+      "runtime": "nodejs22",
+      "ignore": ["node_modules", ".git", "*.local", "*.test.js", ".env.*"]
+    }
+  ],
+  "firestore": { "rules": "firestore.rules" },
+  "emulators": {
+    "auth": { "port": 9399 },
+    "firestore": { "port": 8381 },
+    "functions": { "port": 5399 },
+    "hub": { "port": 4611 },
+    "logging": { "port": 4711 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

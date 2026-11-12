@@ -44,6 +44,32 @@ async function verificarVinculos(admin) {
   return { fichas, vinculadas, cuentas, problemas };
 }
 
+/* Cuentas de cliente (correo del dominio de códigos) que no están vinculadas a ninguna ficha. Las deja, p. ej.,
+   una migración interrumpida entre crear la cuenta y vincularla: no dan acceso a nada (las reglas exigen el
+   vínculo y nadie conoce su código), pero conviene contarlas. Solo lee; no borra ni cambia nada.
+   Necesita poder listar cuentas (en el proyecto real, mientras dura el permiso temporal de F5). */
+async function cuentasSinVincular(admin) {
+  const snap = await admin.firestore().collection('clients').get();
+  const vinculadas = new Set();
+  snap.docs.forEach(d => {
+    const c = d.data() || {};
+    [c.authUid].concat(Array.isArray(c.authUids) ? c.authUids : [], Array.isArray(c.cuentasEnRevision) ? c.cuentasEnRevision : [])
+      .filter(Boolean).forEach(u => vinculadas.add(u));
+  });
+  const dominio = '@' + id.DOMAIN;
+  let total = 0, sinVincular = 0, token;
+  do {
+    const pag = await admin.auth().listUsers(1000, token);
+    for (const u of pag.users) {
+      if (!u.email || !u.email.toLowerCase().endsWith(dominio)) continue;
+      total++;
+      if (!vinculadas.has(u.uid)) sinVincular++;
+    }
+    token = pag.pageToken;
+  } while (token);
+  return { cuentasDeCliente: total, sinVincular };
+}
+
 async function main() {
   const admin = require('firebase-admin');
   const emulador = !!(process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST);
@@ -54,11 +80,15 @@ async function main() {
   const r = await verificarVinculos(admin);
   console.log('Fichas: ' + r.fichas + '. Con cuenta: ' + r.vinculadas + '. Cuentas vinculadas: ' + r.cuentas + '. Problemas: ' + r.problemas.length + '.');
   r.problemas.forEach(p => console.log('! ' + p.ficha + ' ' + p.tipo));
+  if (process.argv.includes('--sin-vincular')) {
+    const s = await cuentasSinVincular(admin);
+    console.log('Cuentas de cliente: ' + s.cuentasDeCliente + '. Sin vincular a ninguna ficha (no dan acceso): ' + s.sinVincular + '.');
+  }
   if (r.problemas.length) {
     console.log('Quita esos vínculos (el entrenador vuelve a guardar el código de esa ficha) antes de dar el cambio por bueno.');
     process.exit(4);
   }
 }
 
-module.exports = { verificarVinculos };
+module.exports = { verificarVinculos, cuentasSinVincular };
 if (require.main === module) main().catch(e => { console.error(e && e.message ? e.message : e); process.exit(1); });

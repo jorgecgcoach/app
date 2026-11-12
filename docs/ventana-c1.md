@@ -22,7 +22,7 @@ Cada paso **[Autorización]** se ejecuta solo con un «sí» expreso para ESE pa
 | F3b | **Contraseña de respaldo**: en el portátil, «🛟 Copia → 🔐 Acceso de respaldo», pegar la contraseña de Bitwarden dos veces. | Tú | «Acceso de respaldo listo». | Si pide volver a entrar con Google, salir, entrar y repetir. |
 | F3c | **iPhone**: abrir la web (Safari y la app de inicio) → «Entrar con Google». Después «Cerrar sesión» → entrar con **correo + contraseña de respaldo** (copiada de Bitwarden). | Tú | Entras de las dos formas. | Si Google falla en el iPhone pero el respaldo funciona: se sigue (el respaldo es la salida). Si fallan los dos: paramos y volvemos a la web anterior. |
 | F4 | **[Autorización]** `firebase login` (lo abres tú en el navegador) y desplegar las reglas definitivas de Firestore y Storage **desde `reglas-despliegue/`**, con la huella comprobada. Conceder a Storage solo el rol de lectura de P5 tras verificar su identidad. | Yo + tú | Al momento: tú sigues dentro en el portátil y en el iPhone; sin sesión, `coach_data` y la lista de fichas dan «permiso denegado». | Tú no entras: regenerar las reglas con el UID correcto y volver a desplegar (2 min; mientras, todo sigue cerrado). Un fallo de la app que estropee datos: reglas de parada (`firestore.congelado.rules`). |
-| F5 | **[Autorización]** Migración. 1) Permiso temporal `roles/firebaseauth.admin` a `firestore-recuperador` (para crear las cuentas). 2) `--comprobar` y `--simular-aislar` (solo leen). 3) `--apply`. 4) `verificar-vinculos`: 0 problemas. 5) **Retirar el permiso temporal**. | Yo | 23 fichas con código nuevo y cuenta; «demo» sin tocar; 0 a revisar; 0 errores. | Una ficha con error: repetir `--apply` (no duplica). Fichas «a revisar»: no se tocan; se decide a mano. |
+| F5 | **[Autorización]** Migración. 1) Permiso temporal **mínimo** a `firestore-recuperador` (sección «Permiso temporal de F5»). 2) `--comprobar` y `--simular-aislar` (solo leen). 3) `--apply`. 4) `verificar-vinculos --sin-vincular`: 0 problemas. 5) **Retirar el permiso temporal** y comprobar que ya no está. | Yo | 23 fichas con código nuevo y cuenta; «demo» sin tocar; 0 a revisar; 0 errores. | Sección «Si la migración se corta». Fichas «a revisar»: no se tocan; se decide a mano. |
 | F6 | Entregar los códigos (procedimiento abajo). | Tú | Cada cliente entra. | Código que no funciona: «Código de acceso» → 🎲 generar otro → guardar → entregar el nuevo. |
 | F7 | Cliente de prueba en el iPhone: entrar con un código, guardar una serie, cerrar y abrir la app, verla en el portátil; modo avión y vuelta. | Tú | Lista P6 de `despliegue-c1.md`. | Ver tabla «Síntoma tras F4». |
 | F8 | Seguimiento 24–48 h: Firestore → Uso (sin picos de «permiso denegado»); Authentication → Usuarios (solo tú + 23 clientes). | Tú + yo | — | — |
@@ -40,11 +40,30 @@ Tiempo con datos tan expuestos como hoy: solo de F3 a F4 (≈15 min, lo que tard
 | La app de los clientes estropea algo | Reglas de parada: los clientes solo leen; tú sigues entrando. |
 | Datos dañados | Parada + restauración aditiva desde la copia F1, con autorización. |
 
-## Cambios pendientes en móviles con la versión antigua
+## Permiso temporal de F5 (preparado; NO aplicado)
+
+La migración solo usa tres llamadas de Authentication: buscar una cuenta (`getUser`, `getUserByEmail`), crearla (`createUser`) y ponerle la marca de su ficha (`setCustomUserClaims`); `verificar-vinculos --sin-vincular` además las lista. Eso son **tres permisos**: `firebaseauth.users.get`, `firebaseauth.users.create` y `firebaseauth.users.update`. No hace falta `roles/firebaseauth.admin` (también borra cuentas y cambia la configuración de acceso). Se usa un **rol propio con solo esos tres**, que además **caduca solo** a las 3 horas aunque se olvide retirarlo.
+
+1. Crear el rol (tú, con tu cuenta, en la terminal que yo prepare): `gcloud iam roles create migracionCuentasC1 --project=appjorgecgcoach --title="Migracion C1 (temporal)" --permissions=firebaseauth.users.get,firebaseauth.users.create,firebaseauth.users.update --stage=GA`
+2. Concederlo solo a `firestore-recuperador`, con caducidad: `gcloud projects add-iam-policy-binding appjorgecgcoach --member=serviceAccount:firestore-recuperador@appjorgecgcoach.iam.gserviceaccount.com --role=projects/appjorgecgcoach/roles/migracionCuentasC1 --condition='expression=request.time < timestamp("AAAA-MM-DDTHH:MM:00Z"),title=caduca-ventana-c1'` (la hora se pone esa noche: inicio + 3 h).
+3. Verificar (solo lee), esperando 2–5 min a que se propague: como `firestore-recuperador`, `testIamPermissions` debe devolver los tres permisos y **ninguno** de `firebaseauth.users.delete`, `firebaseauth.configs.update`; la política del proyecto debe mostrar ese rol en esa única cuenta. `firebase-adminsdk-fbsvc` no se toca.
+4. Retirar, nada más terminar F5: `gcloud projects remove-iam-policy-binding` con el mismo miembro, rol y condición, y `gcloud iam roles delete migracionCuentasC1 --project=appjorgecgcoach`. Verificar: `testIamPermissions` ya no devuelve ninguno de los tres y la política no muestra el rol.
+
+## Si la migración se corta (probado)
+
+Probado con el proceso muerto de golpe en tres momentos (`scripts/interrupcion-emulador.test.js`): con la cuenta creada sin marca, con la marca puesta pero sin vincular, y justo después de vincular una ficha. En los tres casos, **repetir `--apply`** termina el trabajo: las fichas ya hechas **conservan su código y su cuenta**, cada ficha queda con **una sola** cuenta y **un solo** código, no quedan códigos viejos, «demo» no se toca y valoraciones, series y pagos quedan idénticos. Una tercera ejecución no cambia nada.
+
+- Lo único que puede quedar es **una cuenta suelta** (creada justo antes del corte, sin vincular). No da acceso a nada: nadie conoce su código y las reglas exigen el vínculo (probado: no puede leer ninguna ficha). `verificar-vinculos --sin-vincular` la cuenta. No se borra sola: se deja (o se borra más adelante con tu autorización). Por eso en F8 puede haber «tú + 23 + 1».
+- Qué hacer: 1) no tocar nada en la app; 2) comprobar que el permiso temporal sigue vigente (si caducó, volver a concederlo, con tu sí); 3) `--comprobar` (solo lee); 4) `--apply` otra vez; 5) `verificar-vinculos --sin-vincular`; 6) retirar el permiso. Si algo no cuadra (una ficha «a revisar» o un error que se repite): se para; esa ficha se queda sin código hasta revisarla, las demás funcionan.
+- Los códigos se entregan **solo cuando F5 ha terminado** y `verificar-vinculos` da 0 problemas: así nunca se entrega un código que luego cambie.
+
+## Cambios pendientes en móviles con la versión antigua (probado)
 
 - Lo que un cliente guarde **antes de F4** llega a la nube como siempre.
-- Desde F4, un móvil con la web antigua no puede guardar: el cambio queda en su móvil (el guardado lo mantiene pendiente y lo anota en el diario del navegador). Al entrar con su código nuevo, la web nueva lo recupera y lo sube a SU ficha (`afterDataLoaded → recover`). La migración no toca entrenamientos, series ni valoraciones (probado), y la guardia `_rev` hace que lo pendiente se monte sobre la versión actual sin pisar nada.
-- Límite real: si el cliente borra los datos del navegador, o usa solo Safari y no abre la web en 7 días, lo que no llegó a subir se pierde. Por eso el aviso pide **comprobar antes de la noche que no queda nada sin guardar** (sin aviso rojo).
+- Desde F4, un móvil con la web antigua no puede guardar: el cambio queda en su móvil con el aviso rojo. Al entrar con su código nuevo **en ese mismo navegador o app**, la web nueva lo sube solo a SU ficha.
+- **Probado en el navegador** con la versión publicada hoy y la nueva, el emulador y datos ficticios: serie registrada en la versión antigua con las reglas cerradas → migración → entrar con el código nuevo → la serie llega sola a la nube, sin aviso ni botones; valoración, pagos y código intactos.
+- Esa prueba encontró un fallo, ya **corregido** (`shared/safe-save.js`, prueba en `shared/safe-save.test.js`): si la nube no tenía un campo que la app rellena al abrir, la versión nueva lo tomaba por «cambio de otro dispositivo» y pedía al cliente elegir (el botón «Usar la nube solo en lo que choca» sí conservaba la serie). Ahora un relleno local no cuenta como cambio; un cambio real de otro dispositivo sigue siendo conflicto.
+- Límites reales: 1) cada navegador guarda lo suyo: en iPhone, **Safari y el icono de la pantalla de inicio son sitios distintos**; lo pendiente solo sube al entrar desde el mismo sitio donde se registró. 2) Si el cliente borra los datos del navegador, o en iPhone no abre la web en 7 días, lo que no subió se pierde. Por eso el aviso pide comprobar antes que no hay aviso rojo y entrar con el código nuevo **desde donde entrena siempre**.
 
 ## Aviso a los clientes (enviar 2–3 días antes)
 
@@ -52,7 +71,7 @@ Tiempo con datos tan expuestos como hoy: solo de F3 a F4 (≈15 min, lo que tard
 >
 > Antes de esa noche: abre la app y comprueba que todo lo que has registrado está guardado (no debe aparecer ningún aviso rojo). Esa noche, durante un rato, no podrás entrar.
 >
-> Tu código nuevo es solo para ti: no lo compartas. Si no te funciona, escríbeme y te genero otro al momento. No pierdes nada de lo registrado.
+> Cuando recibas el código, entra desde donde entrenas siempre (si usas el icono de la pantalla de inicio, desde ahí). Tu código nuevo es solo para ti: no lo compartas. Si no te funciona, escríbeme y te genero otro al momento. No pierdes nada de lo registrado.
 
 ## Entrega segura de los códigos (F6)
 

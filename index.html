@@ -308,7 +308,7 @@ textarea:focus{border-color:var(--teal)}
 .ccard-gear{font-size:1.05rem}
 
 /* toast */
-.toast{position:fixed;left:50%;bottom:84px;transform:translate(-50%,30px);background:var(--navy);color:#fff;padding:12px 20px;border-radius:var(--r-pill);font-weight:800;font-size:.86rem;z-index:90;opacity:0;pointer-events:none;transition:.3s;box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:center}
+.toast{position:fixed;left:50%;bottom:84px;transform:translate(-50%,30px);background:var(--navy);color:#fff;padding:12px 20px;border-radius:var(--r-pill);font-weight:800;font-size:.86rem;z-index:110;opacity:0;pointer-events:none;transition:.3s;box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .toast.bad{background:#b3261e}
 .fade{animation:fade .3s ease}
@@ -8932,6 +8932,12 @@ async function saveCoachBackupAccess(btn){
     // updatePassword sobre la cuenta de Google le añade (o cambia) la contraseña: mismo usuario (UID).
     // Probado en el emulador de Auth; linkWithCredential con el mismo correo da email-already-in-use.
     await u.updatePassword(p1);
+    // Solo se da por lista si Firebase confirma que la cuenta ya tiene la contraseña.
+    await u.reload();
+    const cu=firebase.auth().currentUser;
+    if(!(cu&&cu.uid===u.uid&&(cu.providerData||[]).some(p=>p.providerId==='password'))){
+      const err=new Error('respaldo-no-confirmado');err.code='jcg/respaldo-no-confirmado';throw err;
+    }
     closeCoachBackupAccess();
     toast('Acceso de respaldo listo. Pruébalo en el iPhone.');
   }catch(e){
@@ -8941,6 +8947,7 @@ async function saveCoachBackupAccess(btn){
     toast(c==='auth/requires-recent-login'?'Por seguridad, cierra sesión, vuelve a entrar con Google y repítelo.'
       :c==='auth/operation-not-allowed'?'Falta activar «Correo/contraseña» en Firebase Authentication.'
       :c==='auth/weak-password'?'Contraseña demasiado débil.'
+      :c==='jcg/respaldo-no-confirmado'?'Firebase no confirma la contraseña: no se ha guardado. Avisa antes de seguir.'
       :c==='auth/credential-already-in-use'||c==='auth/email-already-in-use'?'Ya existe otra cuenta con ese correo y contraseña: no se ha vinculado. Avisa antes de seguir.'
       :'No se ha podido guardar. Inténtalo de nuevo.','bad');
   }

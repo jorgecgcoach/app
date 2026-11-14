@@ -8667,7 +8667,10 @@ let _authLoaded=false;
 function preferGoogleRedirect(){
   try{
     const standalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone;
-    return !!standalone;
+    // Solo iPhone/iPad. En la app instalada del ordenador (Chrome/Edge) la ventana emergente funciona y la
+    // redirección vuelve sin sesión (14-11-2026: «Google no ha podido completar el acceso»).
+    const ios=/iPhone|iPad|iPod/.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+    return !!(standalone&&ios);
   }catch(_){ return false; }
 }
 // Si una redirección a Google vuelve sin sesión (típico de la app instalada en iPhone), se dice qué hacer

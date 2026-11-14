@@ -18,7 +18,7 @@ test.before(async function () {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT,
     firestore: {
-      rules: fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8')
+      rules: require('./reglas').leer('firestore.rules')
     }
   });
 });

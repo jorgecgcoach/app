@@ -30,29 +30,64 @@ service cloud.firestore {
 
     function isCoach() {
       return signedIn() && (
-        request.auth.token.role == 'coach'
+        request.auth.token.get('role', '') == 'coach'
         || request.auth.uid == 'REEMPLAZAR_UID_DEL_COACH'
       );
+    }
+
+    // GUARDIA _rev (la que tiene producción desde el 2026-11-07): solo se acepta la escritura del guardado
+    // seguro, con _rev exactamente el anterior + 1. Una pestaña o app antigua que escribe datos viejos se rechaza.
+    function revOk() {
+      return resource == null
+        ? request.resource.data.get('_rev', 0) == 1
+        : request.resource.data.get('_rev', -1) == resource.data.get('_rev', 0) + 1;
     }
 
     // coach_data no lleva authUid. Un where('authUid') no puede alcanzarlo
     // y un cliente no puede hacerse dueño de la meta del entrenador.
     function coachMetaWriteOk(clientId) {
-      return clientId != 'coach_data' || !('authUid' in request.resource.data);
+      return clientId != 'coach_data'
+        || (!('authUid' in request.resource.data) && !('authUids' in request.resource.data));
     }
 
+    // authUid: la cuenta del código principal. authUids (opcional): todas las cuentas del
+    // cliente cuando tenía más de un código válido; así ninguno deja de funcionar al migrar.
     function ownsClient() {
-      return signedIn() && resource.data.authUid == request.auth.uid;
+      return signedIn() && (
+        resource.data.get('authUid', null) == request.auth.uid
+        || request.auth.uid in resource.data.get('authUids', [])
+      );
     }
+
+    // El cliente no puede cambiar quién es el dueño de su ficha.
+    function ownersUnchanged() {
+      return request.resource.data.get('authUid', null) == resource.data.get('authUid', null)
+        && request.resource.data.get('authUids', []) == resource.data.get('authUids', []);
+    }
+
+    // Campos que SOLO cambia el entrenador. El cliente escribe su registro (blocks), sus formularios
+    // (fichas), sus avisos (push), etc., pero no puede cambiar su nombre, su código, sus pagos ni lo que
+    // el entrenador configura para él, ni sus valoraciones (backRehab). mods, serviceType, notifs y backRehab los rellena la app con valores por
+    // defecto si faltan: el cliente puede CREARLOS si no existen, nunca cambiarlos.
+    // (authUid/authUids: ownersUnchanged.)
+    function clientFieldsOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['code', 'name', 'pagos'])
+        && (!changed.hasAny(['mods']) || !('mods' in resource.data))
+        && (!changed.hasAny(['serviceType']) || !('serviceType' in resource.data))
+        && (!changed.hasAny(['notifs']) || !('notifs' in resource.data))
+        && (!changed.hasAny(['backRehab']) || !('backRehab' in resource.data));
+    }
+
 
     match /clients/{clientId} {
       allow get, list: if isCoach() || ownsClient();
 
-      allow create: if isCoach() && coachMetaWriteOk(clientId);
+      allow create: if isCoach() && coachMetaWriteOk(clientId) && revOk();
 
-      allow update: if coachMetaWriteOk(clientId) && (
+      allow update: if coachMetaWriteOk(clientId) && revOk() && (
         isCoach()
-        || (ownsClient() && request.resource.data.authUid == resource.data.authUid)
+        || (ownsClient() && ownersUnchanged() && clientFieldsOk())
       );
 
       allow delete: if isCoach();
@@ -60,6 +95,17 @@ service cloud.firestore {
 
     match /contacts/{contactId} {
       allow read, write: if isCoach();
+    }
+
+    // Catálogo de vídeos para clientes (shared/client-catalog.js): nombre + vídeo general de la
+    // biblioteca propia. Sin datos personales. Lo lee cualquier sesión; solo escribe el entrenador.
+    match /catalog/{docId} {
+      allow get: if signedIn() && docId == 'exercises';
+      allow create, update: if isCoach() && docId == 'exercises'
+        && request.resource.data.keys().hasOnly(['items', 'count', 'updatedAt'])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 3000;
+      allow delete: if isCoach();
     }
 
     match /{document=**} {

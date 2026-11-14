@@ -1,12 +1,14 @@
 /* Utilidades del EMULADOR para las pruebas e2e (datos ficticios).
      node e2e/emu.js seed            borra el emulador y crea coach_data ficticio
      node e2e/emu.js dump [docId]    imprime los documentos de clients
+     node e2e/emu.js coach <email>   (emulador de Auth) marca esa cuenta ficticia como entrenador (claim role=coach)
    Se niega a ejecutarse si no va contra 127.0.0.1:8080 con proyecto demo-. */
 'use strict';
 const PROJECT = 'demo-jcg-e2e';
 const HOST = '127.0.0.1:8080';
 process.env.FIRESTORE_EMULATOR_HOST = HOST;
 process.env.GCLOUD_PROJECT = PROJECT;
+process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 if (!PROJECT.startsWith('demo-') || !/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST)) {
   console.error('Rechazado: solo emulador local con proyecto demo-');
   process.exit(1);
@@ -18,6 +20,8 @@ const db = admin.firestore();
 async function seed() {
   const r = await fetch(`http://${HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, { method: 'DELETE' });
   if (!r.ok) throw new Error('No se pudo vaciar el emulador: ' + r.status);
+  // Si el emulador de Auth está en marcha, también se vacían sus cuentas ficticias.
+  try { await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE' }); } catch (_) {}
   await db.collection('clients').doc('coach_data').set({
     coachCode: '1234',
     codes: {},
@@ -63,7 +67,14 @@ async function summary() {
   }
 }
 
+async function coach(email) {
+  if (!email) throw new Error('uso: coach <email>');
+  const u = await admin.auth().getUserByEmail(email);
+  await admin.auth().setCustomUserClaims(u.uid, { role: 'coach' });
+  console.log('Cuenta ficticia marcada como entrenador (claim role=coach).');
+}
+
 const [cmd, arg] = process.argv.slice(2);
-(cmd === 'seed' ? seed() : cmd === 'dump' ? dump(arg) : cmd === 'summary' ? summary() : Promise.reject(new Error('uso: seed | dump [id] | summary')))
+(cmd === 'coach' ? coach(arg) : cmd === 'seed' ? seed() : cmd === 'dump' ? dump(arg) : cmd === 'summary' ? summary() : Promise.reject(new Error('uso: seed | dump [id] | summary | coach <email>')))
   .then(() => process.exit(0))
   .catch(e => { console.error(e.message || e); process.exit(1); });

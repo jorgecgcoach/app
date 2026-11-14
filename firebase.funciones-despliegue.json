@@ -1,0 +1,11 @@
+{
+  "_comentario": "Despliega SOLO las funciones de C1 (opción C). Requiere plan Blaze. NO usar sin autorización: ver docs/altas-servidor.md.",
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "c1",
+      "runtime": "nodejs22",
+      "ignore": ["node_modules", ".git", "*.local", "*.test.js"]
+    }
+  ]
+}

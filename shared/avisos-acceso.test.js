@@ -37,3 +37,16 @@ test('el acceso de respaldo solo se da por listo si Firebase confirma la contras
   assert.ok(iUpd > 0 && iRel > iUpd && iChk > iRel && iOk > iChk, 'updatePassword → reload → comprobar proveedor password → aviso de listo');
   assert.match(f, /cu\.uid===u\.uid/, 'misma cuenta (mismo UID)');
 });
+
+test('la app instalada en el ordenador entra con Google por ventana emergente; la redirección solo en iPhone/iPad', () => {
+  const i = html.indexOf('function preferGoogleRedirect(');
+  const f = html.slice(i, i + html.slice(i).search(/\n\}\r?\n/));
+  const prefer = new Function('window', 'navigator', f + '\n}\nreturn preferGoogleRedirect();');
+  const win = standalone => ({ matchMedia: () => ({ matches: standalone }) });
+  const pc = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130', platform: 'Win32', maxTouchPoints: 0 };
+  const iphone = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari', platform: 'iPhone', maxTouchPoints: 5 };
+  assert.equal(prefer(win(true), pc), false, 'app instalada en el PC: ventana emergente');
+  assert.equal(prefer(win(false), pc), false, 'pestaña normal en el PC: ventana emergente');
+  assert.equal(prefer(win(false), iphone), false, 'Safari en iPhone: ventana emergente');
+  assert.equal(prefer(win(true), iphone), true, 'app de la pantalla de inicio del iPhone: redirección');
+});

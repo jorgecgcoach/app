@@ -47,6 +47,11 @@ function buildHtml() {
 
   // Modo Auth (E2E_AUTH=1): activa AUTH_ENABLED SOLO en esta copia servida y conecta Firebase Auth
   // al emulador (puerto 9099). index.html en disco sigue con AUTH_ENABLED=false.
+  // Con C1 activado index.html trae AUTH_ENABLED=true: la copia servida parte siempre de false y solo E2E_AUTH lo enciende,
+  // así sin E2E_AUTH nunca se habla con un servicio de Auth que no sea el emulador.
+  const flagRe = /const AUTH_ENABLED=(true|false);/;
+  if (html.split(flagRe).length !== 3) throw new Error('No encuentro AUTH_ENABLED');
+  html = html.replace(flagRe, 'const AUTH_ENABLED=false;');
   if (AUTH) {
     const flag = 'const AUTH_ENABLED=false;';
     if (html.split(flag).length !== 2) throw new Error('No encuentro AUTH_ENABLED=false');

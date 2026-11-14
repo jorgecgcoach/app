@@ -2352,7 +2352,7 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
 /* AUTH_ENABLED en false: la app entra como hasta ahora (código en el dispositivo, sin Firebase Auth).
    El camino nuevo (ensureAuth, loadClientAfterAuth, loadCoachDataAfterAuth) solo corre si esto pasa a true.
    Ver docs/firestore-auth.md. No activarlo hasta el checklist con el dueño. */
-const AUTH_ENABLED=false;
+const AUTH_ENABLED=true;
 /* Opción C (altas controladas): true = las cuentas de cliente las crea la función altaCliente en el servidor
    (registro público cerrado). false = las crea este navegador, como hasta ahora. Solo tiene efecto con
    AUTH_ENABLED. No activarlo hasta desplegar la función (plan Blaze). Ver docs/altas-servidor.md. */

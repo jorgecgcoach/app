@@ -1658,10 +1658,10 @@ html,body{overflow-x:clip}
 <script src="shared/client-catalog.js?v=20261109-c1"></script>
 <script src="shared/campos-cliente.js?v=20261111-c1b"></script>
 <script src="auth/code-identity.js?v=20261111-c1"></script>
-<script src="ui/coach-nav.js?v=20261108-e5"></script>
-<script src="ui/coach-home.js?v=20261108-e5"></script>
-<script src="ui/coach-calendar.js?v=20261108-e5"></script>
-<script src="ui/coach-library.js?v=20261108-e5"></script>
+<script src="ui/coach-nav.js?v=20261115-f1"></script>
+<script src="ui/coach-home.js?v=20261115-f1"></script>
+<script src="ui/coach-calendar.js?v=20261115-f1"></script>
+<script src="ui/coach-library.js?v=20261115-f1"></script>
 <script>
 // Firebase config
 const firebaseConfig = {
@@ -1878,7 +1878,7 @@ if(typeof firebase === 'undefined'){
 .neg-date2{padding:5px 6px;border:1.5px solid var(--line);border-radius:8px;font-weight:700;color:#0C3B3B;font-size:13px;font-family:inherit;background:#fff}
 .neg-date2:focus{outline:0;border-color:#54BEBD}
 </style>
-<link rel="stylesheet" href="ui/design-system.css?v=20261108-e5">
+<link rel="stylesheet" href="ui/design-system.css?v=20261115-f1">
 </head>
 <body>
 <script>
@@ -2001,32 +2001,21 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <!-- Menú principal del entrenador (ui/coach-nav.js marca la sección activa) -->
     <nav class="ds-nav" id="dsNav" aria-label="Menú principal">
       <a class="ds-nav-item" href="#inicio" data-page="inicio" onclick="return navGo(event,'inicio')" title="Inicio"><svg class="ds-ic"><use href="#i-home"/></svg><span class="ds-nav-tx">Inicio</span></a>
-      <a class="ds-nav-item" href="#calendario" data-page="calendario" onclick="return navGo(event,'calendario')" title="Calendario"><svg class="ds-ic"><use href="#i-calendar"/></svg><span class="ds-nav-tx">Calendario</span></a>
       <div class="ds-nav-group" data-group="clientes">
         <div class="ds-nav-row">
           <a class="ds-nav-item" href="#clientes" data-page="clientes" onclick="return navGo(event,'clientes')" title="Clientes"><svg class="ds-ic"><use href="#i-users"/></svg><span class="ds-nav-tx">Clientes</span><span class="ds-nav-count" id="navClientCount"></span></a>
           <button class="ds-nav-exp" type="button" onclick="navToggle('clientes')" aria-label="Mostrar u ocultar la lista de clientes"><svg class="ds-ic"><use href="#i-chevron"/></svg></button>
         </div>
         <div class="ds-nav-sub ds-nav-clients">
+          <a class="ds-nav-subitem ds-nav-neg" href="#negocio/resumen" data-page="negocio" data-sub="negocio" onclick="return navGo(event,'negocio/resumen')"><svg class="ds-ic"><use href="#i-chart"/></svg>Contratos y pagos</a>
           <div class="clients" id="clients"></div>
           <button class="add-btn" onclick="openAdd()"><svg class="ds-ic"><use href="#i-plus"/></svg> Añadir bloque</button>
         </div>
       </div>
-      <div class="ds-nav-group" data-group="biblioteca">
-        <div class="ds-nav-row">
-          <a class="ds-nav-item" href="#biblioteca" data-page="biblioteca" onclick="return navGo(event,'biblioteca')" title="Biblioteca de ejercicios"><svg class="ds-ic"><use href="#i-dumbbell"/></svg><span class="ds-nav-tx">Biblioteca de ejercicios</span></a>
-        </div>
-        <div class="ds-nav-sub">
-          <a class="ds-nav-subitem" href="#biblioteca" data-page="biblioteca" data-sub="ejercicios" onclick="return navGo(event,'biblioteca')">Ejercicios</a>
-          <button class="ds-nav-subitem" type="button" onclick="navCloseDrawer();openLibrary()">Plantillas</button>
-        </div>
-      </div>
-      <div class="ds-nav-group" data-group="negocio">
-        <div class="ds-nav-row">
-          <a class="ds-nav-item" href="#negocio/resumen" data-page="negocio" onclick="return navGo(event,'negocio/resumen')" title="Negocio"><svg class="ds-ic"><use href="#i-chart"/></svg><span class="ds-nav-tx">Negocio</span></a>
-        </div>
-        <div class="ds-nav-sub" id="navNegSub"></div>
-      </div>
+      <a class="ds-nav-item" href="#calendario" data-page="calendario" onclick="return navGo(event,'calendario')" title="Calendario"><svg class="ds-ic"><use href="#i-calendar"/></svg><span class="ds-nav-tx">Calendario</span></a>
+      <a class="ds-nav-item" href="#biblioteca" data-page="biblioteca" onclick="return navGo(event,'biblioteca')" title="Biblioteca de ejercicios"><svg class="ds-ic"><use href="#i-dumbbell"/></svg><span class="ds-nav-tx">Biblioteca de ejercicios</span></a>
+      <a class="ds-nav-item" href="#plantillas" data-page="plantillas" onclick="return navGo(event,'plantillas')" title="Plantillas"><svg class="ds-ic"><use href="#i-layers"/></svg><span class="ds-nav-tx">Plantillas</span></a>
+      <a class="ds-nav-item" href="#copias" data-page="copias" onclick="return navGo(event,'copias')" title="Copias de seguridad"><svg class="ds-ic"><use href="#i-shield"/></svg><span class="ds-nav-tx">Copias de seguridad</span></a>
       <a class="ds-nav-item" href="#configuracion" data-page="configuracion" onclick="return navGo(event,'configuracion')" title="Configuración"><svg class="ds-ic"><use href="#i-settings"/></svg><span class="ds-nav-tx">Configuración</span></a>
     </nav>
     <div class="side-foot">

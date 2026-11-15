@@ -593,3 +593,69 @@ body:not(.client-mode){background:var(--ds-bg)}
 .prog-vid-btn.coach{background:var(--ds-navy,#0C3B3B);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;gap:2px;font-size:.8rem}
 .prog-vid-btn.coach small{font-size:.55rem;font-weight:800;letter-spacing:.02em;text-transform:uppercase;opacity:.85}
 #toast.kl-bad{background:var(--ds-danger,#E23B3B);color:#fff}
+
+/* =====================================================================
+   Fase 1 (menú principal) — inicio del entrenador, Plantillas y Copias
+   ===================================================================== */
+:root{--ds-gold:#C9A227;--ds-gold-soft:#FBF6E6;--ds-gold-ink:#8A6D1A}
+.p-ok{background:var(--ds-ok-soft);color:#1E8A5A}
+.dash-head-act{display:flex;align-items:center;gap:10px}
+.dash-new{height:44px;white-space:nowrap}
+.dash-hello p b{color:var(--ds-navy);font-weight:700}
+.dash-kpi{position:relative;text-align:left}
+.dash-kpi-tx{flex:1}
+.dash-kpi.t-gold{background:var(--ds-gold-soft);border-color:#F0E2B4}.dash-kpi.t-gold .dash-kpi-ic{color:var(--ds-gold-ink)}
+.dash-bad{color:#C02727;font-weight:700}
+.dash-bar{display:block;height:6px;border-radius:999px;background:#E7EEEE;overflow:hidden;margin-top:6px;max-width:220px}
+.dash-bar>i{display:block;height:100%;border-radius:999px;background:var(--ds-teal)}
+.dash-bar-gold{background:rgba(201,162,39,.18);max-width:none}.dash-bar-gold>i{background:var(--ds-gold)}
+.dash-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+.dash-colA,.dash-colB{display:flex;flex-direction:column;gap:16px;min-width:0}
+.dash>*{min-width:0}
+.dash-card-h h3>span:first-of-type{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-av.t-danger{background:var(--ds-danger-soft);color:#C02727}
+.dash-av .ds-ic{width:18px;height:18px}
+.dash-row-end-col{flex-direction:column;align-items:flex-end;gap:4px}
+.dash-ev.t-cierre .dash-date{box-shadow:inset 3px 0 0 var(--ds-call)}
+.dash-more{display:block;width:100%;margin-top:4px;padding:8px;border-radius:var(--ds-r-sm);font-size:13px;font-weight:600;color:var(--ds-teal-deep);text-align:center!important}
+.dash-more:hover{background:var(--ds-teal-soft)}
+.dash-paysum{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:10px 12px;margin:0 0 6px;border-radius:var(--ds-r);background:#F5F8F8;font-size:13px;color:var(--ds-ink-2)}
+.dash-paysum b{color:var(--ds-navy);font-size:15px}
+.dash-paysum-bad{font-weight:700;color:#C02727;background:var(--ds-danger-soft);padding:3px 9px;border-radius:999px}
+.dash-quick{grid-template-columns:repeat(6,minmax(0,1fr))}
+.dash-q{min-height:100px}
+@media(max-width:1180px){.dash-quick{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1023px){.dash-grid{grid-template-columns:1fr}}
+@media(max-width:640px){
+  .dash-head{align-items:stretch}
+  .dash-head-act{width:100%}
+  .dash-head-act .dash-search{flex:1}
+  .dash-new{width:44px;padding:0}
+  .dash-new span{display:none}
+  .dash-kpi-go{display:none}
+  .dash-bar{max-width:none}
+  /* una sola columna, ordenada por prioridad */
+  .dash-grid{display:flex;flex-direction:column;gap:14px;min-width:0;width:100%}
+  .dash-grid .dash-card{width:100%;max-width:100%}
+  .dash-colA,.dash-colB{display:contents}
+  .dash-a-tareas{order:1}.dash-a-citas{order:2}.dash-a-prog{order:3}.dash-a-pagos{order:4}
+  .dash-quick{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dash-q{min-height:86px}
+}
+
+/* Plantillas y Copias de seguridad como pantallas */
+.ds-pagecard{background:var(--ds-surface);border:1px solid var(--ds-line);border-radius:var(--ds-r-lg);box-shadow:var(--ds-shadow);padding:18px;max-width:760px;font-family:var(--ds-font)}
+.ds-lead{margin:0 0 14px;font-size:14px;color:var(--ds-ink-2);line-height:1.5}
+.ds-copies{display:flex;flex-direction:column;gap:12px;max-width:760px;font-family:var(--ds-font)}
+.ds-copy{display:flex;align-items:center;gap:14px;background:var(--ds-surface);border:1px solid var(--ds-line);border-radius:var(--ds-r-lg);box-shadow:var(--ds-shadow);padding:16px}
+.ds-copy-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--ds-teal-soft);color:var(--ds-teal-deep)}
+.ds-copy-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ds-copy-tx b{font-size:15px;color:var(--ds-navy)}
+.ds-copy-tx span{font-size:13px;color:var(--ds-ink-2);line-height:1.45}
+.ds-copy .ds-btn{flex:none;cursor:pointer}
+.ds-nav-neg{display:flex;align-items:center;gap:8px;font-weight:600}
+.ds-nav-neg .ds-ic{width:16px;height:16px}
+@media(max-width:640px){.ds-copy{flex-wrap:wrap}.ds-copy .ds-btn{width:100%}}
+.dash-card-h h3{min-width:0;flex:1 1 auto}
+.dash-card-h .dash-link{flex:none}
+@media(max-width:640px){.dash-card-h .dash-link{padding:6px 4px}.dash-card-h h3{font-size:15px}}

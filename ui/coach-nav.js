@@ -3,14 +3,14 @@
    - No guarda nada: solo cambia lo que se ve (UI.home, UI.page, UI.tab, DATA.active) y llama a
      las funciones de pintado que ya existían en index.html.
    - Rutas (en el #hash de la URL, para que el botón atrás del navegador funcione dentro de la app):
-       #inicio · #calendario · #clientes · #biblioteca · #configuracion
+       #inicio · #clientes · #calendario · #biblioteca · #plantillas · #copias · #configuracion
        #negocio/<apartado>                     (resumen, contratos, crm, renov, pagos, planes, metricas, importar)
        #cliente/<idCliente>/<idBloque>/<pestaña>
    Depende de globales de index.html (UI, DATA, NEG, isCoach, renderAll, renderNegTabs…), que solo se
    usan cuando se llama a estas funciones, nunca al cargar el archivo. */
 'use strict';
 
-var NAV_PAGES = ['inicio', 'calendario', 'clientes', 'biblioteca', 'negocio', 'configuracion'];
+var NAV_PAGES = ['inicio', 'clientes', 'calendario', 'biblioteca', 'plantillas', 'copias', 'configuracion', 'negocio'];
 var NAV_NEG_TABS = [
   ['resumen', 'Resumen'], ['contratos', 'Contratos'], ['crm', 'CRM'], ['renov', 'Renovaciones'],
   ['pagos', 'Pagos'], ['planes', 'Planes'], ['metricas', 'Métricas'], ['importar', 'Importar']
@@ -20,7 +20,9 @@ var NAV_TITLES = {
   calendario: ['Calendario', 'Fechas de tus clientes y tu negocio'],
   clientes: ['Clientes', 'Todos tus clientes'],
   biblioteca: ['Biblioteca de ejercicios', 'Ejercicios y vídeos'],
-  negocio: ['Negocio', 'Cobros, contratos y métricas'],
+  plantillas: ['Plantillas', 'Entrenamientos y dietas para reutilizar'],
+  copias: ['Copias de seguridad', 'Tus datos, a salvo'],
+  negocio: ['Contratos y pagos', 'Cobros, contratos y métricas'],
   configuracion: ['Configuración', 'Ajustes del entrenador']
 };
 var NAV = { started: false, applying: false, open: null, openFor: null };
@@ -134,6 +136,7 @@ function navGroupOpen(k, page) {
 }
 function navToggle(g) {
   var page = UI && UI.home ? navPage() : 'clientes';
+  if (page === 'negocio') page = 'clientes';
   if (!NAV.open) NAV.open = {};
   NAV.open[g] = !navGroupOpen(g, page);
   NAV.openFor = page;
@@ -142,6 +145,7 @@ function navToggle(g) {
 function navMarkActive() {
   var nav = document.getElementById('dsNav'); if (!nav || !UI) return;
   var page = UI.home ? navPage() : 'clientes';
+  var menuPage = page === 'negocio' ? 'clientes' : page; // «Contratos y pagos» está dentro de Clientes
   var negTab = (typeof NEG !== 'undefined' && NEG && NEG.tab) || 'resumen';
   var sub = document.getElementById('navNegSub');
   if (sub && !sub.childElementCount) {
@@ -150,18 +154,18 @@ function navMarkActive() {
     }).join('');
   }
   nav.querySelectorAll('.ds-nav-item').forEach(function (a) {
-    var on = a.getAttribute('data-page') === page;
+    var on = a.getAttribute('data-page') === menuPage;
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   nav.querySelectorAll('.ds-nav-subitem[data-sub]').forEach(function (a) {
-    var on = UI.home && a.getAttribute('data-page') === page && (page !== 'negocio' || a.getAttribute('data-sub') === negTab);
+    var on = UI.home && a.getAttribute('data-page') === page && (page !== 'negocio' || a.getAttribute('data-sub') === negTab || a.getAttribute('data-sub') === 'negocio');
     a.classList.toggle('on', on);
   });
-  if (NAV.open && NAV.openFor !== page) NAV.open = null; // al cambiar de sección, vuelve al comportamiento automático
+  if (NAV.open && NAV.openFor !== menuPage) NAV.open = null; // al cambiar de sección, vuelve al comportamiento automático
   nav.querySelectorAll('.ds-nav-group').forEach(function (g) {
     var k = g.getAttribute('data-group');
-    var open = navGroupOpen(k, page);
+    var open = navGroupOpen(k, menuPage);
     g.classList.toggle('open', open);
     var b = g.querySelector('.ds-nav-exp'); if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
@@ -175,7 +179,7 @@ function coachPageTitle() {
   var p = navPage(), t = NAV_TITLES[p] || NAV_TITLES.inicio;
   if (p === 'negocio') {
     var tab = NAV_NEG_TABS.find(function (x) { return x[0] === ((typeof NEG !== 'undefined' && NEG && NEG.tab) || 'resumen'); });
-    return ['Negocio', tab ? tab[1] : t[1]];
+    return ['Contratos y pagos', tab ? tab[1] : t[1]];
   }
   if (p === 'clientes' && DATA && DATA.clients) {
     var n = Object.values(DATA.clients).filter(function (c) { return c && !c.archived; }).length;
@@ -188,13 +192,14 @@ function coachPageTitle() {
 function coachBotnavRender(bn) {
   if (!bn) return;
   var page = navPage();
-  var items = [['inicio', 'Inicio', 'i-home'], ['calendario', 'Calendario', 'i-calendar'], ['clientes', 'Clientes', 'i-users'], ['negocio', 'Negocio', 'i-chart']];
+  var items = [['inicio', 'Inicio', 'i-home'], ['clientes', 'Clientes', 'i-users'], ['calendario', 'Calendario', 'i-calendar'], ['biblioteca', 'Biblioteca', 'i-dumbbell']];
+  if (page === 'negocio') page = 'clientes';
   bn.classList.add('ds-botnav');
   bn.style.display = '';
   bn.innerHTML = items.map(function (it) {
-    var r = it[0] === 'negocio' ? 'negocio/' + ((typeof NEG !== 'undefined' && NEG && NEG.tab) || 'resumen') : it[0];
+    var r = it[0];
     return '<button type="button" class="' + (page === it[0] ? 'on' : '') + '"' + (page === it[0] ? ' aria-current="page"' : '') + ' onclick="navGo(null,\'' + r + '\')"><svg class="ds-ic"><use href="#' + it[2] + '"/></svg><span>' + it[1] + '</span></button>';
-  }).join('') + '<button type="button" class="' + (page === 'biblioteca' || page === 'configuracion' ? 'on' : '') + '" onclick="openSide()" aria-label="Más secciones"><svg class="ds-ic"><use href="#i-grid"/></svg><span>Más</span></button>';
+  }).join('') + '<button type="button" class="' + (page === 'plantillas' || page === 'copias' || page === 'configuracion' ? 'on' : '') + '" onclick="openSide()" aria-label="Más secciones"><svg class="ds-ic"><use href="#i-grid"/></svg><span>Más</span></button>';
 }
 
 /* ---------- pantallas del entrenador ---------- */
@@ -210,6 +215,8 @@ function coachPageRender(v) {
     else v.innerHTML = coachViewBibliotecaPreview();
   }
   else if (p === 'configuracion') v.innerHTML = coachViewConfig();
+  else if (p === 'plantillas') { v.innerHTML = coachViewPlantillas(); try { renderLibraryBody(); } catch (e) { console.warn('Plantillas:', e); } }
+  else if (p === 'copias') v.innerHTML = coachViewCopias();
   else if (p === 'inicio' && typeof viewCoachDashboard === 'function') v.innerHTML = viewCoachDashboard();
   else v.innerHTML = viewHome(); // Clientes: buscador, filtros y tarjetas de siempre
   navMarkActive();
@@ -245,8 +252,31 @@ function coachViewConfig() {
   };
   return '<div class="ds-settings">' +
     row('i-key', 'Código de entrenador', 'Cambia el código con el que entras como entrenador.', 'openCoachCodeModal()') +
-    row('i-shield', 'Copia de seguridad', 'Descarga o restaura una copia de tus datos.', 'openBackup()') +
-    row('i-layers', 'Plantillas', 'Entrenamientos y dietas guardados para reutilizar.', 'openLibrary()') +
+    row('i-shield', 'Copias de seguridad', 'Descarga o restaura una copia de tus datos.', "navGo(null,'copias')") +
+    row('i-layers', 'Plantillas', 'Entrenamientos y dietas guardados para reutilizar.', "navGo(null,'plantillas')") +
+    row('i-chart', 'Contratos y pagos', 'Cuotas, cobros, renovaciones y métricas del negocio.', "navGo(null,'negocio/resumen')") +
     row('i-logout', 'Cerrar sesión', 'Sal de la cuenta de entrenador en este dispositivo.', 'logout()', 'danger') +
+    '</div>';
+}
+
+/* Plantillas: la misma lista de siempre (renderLibraryBody pinta en #libBody), ahora como pantalla. */
+function coachViewPlantillas() {
+  return '<div class="ds-pagecard"><p class="ds-lead">Guarda entrenamientos y dietas con un nombre y aplícalos a cualquier cliente. Para aplicar una plantilla, abre antes la ficha del cliente.</p><div id="libBody"></div></div>';
+}
+
+/* Copias de seguridad: las mismas acciones del aviso «Copia de seguridad» de siempre, en una pantalla. */
+function coachViewCopias() {
+  var card = function (ic, t, d, btn) {
+    return '<div class="ds-copy"><span class="ds-copy-ic">' + dsIcon(ic) + '</span><div class="ds-copy-tx"><b>' + t + '</b><span>' + d + '</span></div>' + btn + '</div>';
+  };
+  return '<div class="ds-copies">' +
+    card('i-shield', 'Descargar copia ahora', 'Guarda en tu ordenador un archivo con todos tus datos. Hazlo de vez en cuando.',
+      '<button class="ds-btn ds-btn-primary" type="button" onclick="exportBackup()">Descargar</button>') +
+    card('i-refresh', 'Restaurar desde un archivo', 'Recupera datos de una copia. No borra lo que ya tienes: solo añade lo que falte.',
+      '<label class="ds-btn ds-btn-secondary">Elegir archivo<input type="file" accept="application/json,.json" style="display:none" onchange="importBackupFile(this.files[0]);this.value=null"></label>') +
+    card('i-layers', 'Mover fotos a la nube', 'Pasa las fotos antiguas de los perfiles al almacenamiento. Alivia el peso de los datos.',
+      '<button class="ds-btn ds-btn-secondary" id="migPhotosBtn" type="button" onclick="migratePhotosToStorage()">Mover fotos</button>') +
+    ((typeof AUTH_ENABLED !== 'undefined' && AUTH_ENABLED) ? card('i-key', 'Acceso de respaldo', 'Tu entrada con correo y contraseña por si Google falla (por ejemplo en el iPhone).',
+      '<button class="ds-btn ds-btn-secondary" type="button" onclick="openCoachBackupAccess()">Revisar</button>') : '') +
     '</div>';
 }

@@ -1662,7 +1662,9 @@ html,body{overflow-x:clip}
 // Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyAKEIpIh5ukD0lTRVNZTe18ysLdkaHuzlU",
-  authDomain: "appjorgecgcoach.firebaseapp.com",
+  // El ayudante de Google se sirve desde la MISMA dirección que la app (repositorio jorgecgcoach.github.io,
+  // carpeta /__/auth/): la vuelta de Google ya no cruza de dominio y funciona en la app del icono del iPhone.
+  authDomain: "jorgecgcoach.github.io",
   projectId: "appjorgecgcoach",
   storageBucket: "appjorgecgcoach.firebasestorage.app",
   messagingSenderId: "268327197097",
@@ -8662,8 +8664,8 @@ function ensureAuthReady(){
 }
 let _authLoaded=false;
 // Solo la app instalada en la pantalla de inicio usa redirección. En Safari normal (también en iPhone)
-// la ventana emergente es lo fiable: desde Safari 16.1 la redirección a otro dominio
-// (firebaseapp.com → github.io) pierde el resultado por la protección de almacenamiento de terceros.
+// la ventana emergente es lo fiable. La redirección a otro dominio (firebaseapp.com → github.io) perdía el
+// resultado por la protección de almacenamiento de terceros; por eso authDomain es ahora jorgecgcoach.github.io.
 function preferGoogleRedirect(){
   try{
     const standalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone;

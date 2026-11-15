@@ -50,3 +50,9 @@ test('la app instalada en el ordenador entra con Google por ventana emergente; l
   assert.equal(prefer(win(false), iphone), false, 'Safari en iPhone: ventana emergente');
   assert.equal(prefer(win(true), iphone), true, 'app de la pantalla de inicio del iPhone: redirección');
 });
+
+test('el ayudante de Google se sirve desde la misma dirección que la app (iPhone, app del icono)', () => {
+  const m = html.match(/const firebaseConfig = \{[\s\S]*?authDomain:\s*"([^"]+)"/);
+  assert.ok(m, 'no encuentro authDomain');
+  assert.equal(m[1], 'jorgecgcoach.github.io');
+});

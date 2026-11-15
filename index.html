@@ -500,6 +500,8 @@ textarea:focus{border-color:var(--teal)}
 .btn-spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(6,32,31,.3);border-top-color:#06201f;border-radius:50%;animation:btnspin .7s linear infinite;vertical-align:-2px;margin-right:8px}
 @keyframes btnspin{to{transform:rotate(360deg)}}
 .login-btn:hover{filter:brightness(1.05)}.login-btn:active{transform:scale(.98)}
+.login-card .login-remember{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;color:rgba(255,255,255,.75);font-weight:700;font-size:.82rem;cursor:pointer;letter-spacing:0}
+.login-card .login-remember input{width:18px;height:18px;padding:0;margin:0;border:0;background:none;accent-color:var(--teal);flex:none;cursor:pointer}
 .coach-link{margin-top:16px;color:rgba(255,255,255,.7);font-weight:800;font-size:.82rem;text-decoration:underline;text-underline-offset:3px}
 .coach-link:hover{color:#fff}
 .login-foot{margin-top:22px;font-size:.66rem;color:rgba(255,255,255,.4);font-weight:700;letter-spacing:.02em}
@@ -1928,6 +1930,7 @@ window.addEventListener('appinstalled',function(){window.__pwaInstalled=true;win
     <div id="clientLogin">
       <p>Introduce el código de acceso que te ha dado Jorge.</p>
       <input id="loginCode" placeholder="DEMO-XXXX" autocomplete="off" onkeydown="if(event.key==='Enter')loginClient()">
+      <label class="login-remember"><input type="checkbox" id="loginRemember"> Recordar en este dispositivo</label>
       <button class="login-btn" onclick="loginClient(this)">Entrar</button>
       <button class="coach-link" onclick="showCoachLogin()">Soy Jorge (entrenador)</button>
     </div>
@@ -9189,7 +9192,7 @@ function renderGate(){
  g.classList.add("open");
 }
 function showCoachLogin(){$("#clientLogin").style.display='none';$("#coachLogin").style.display='block';const i=$("#coachCodeIn");i.value="";if(AUTH_ENABLED){const pin=$("#coachPinBlock");const g=$("#coachGoogleBlock");if(pin)pin.style.display='none';if(g)g.style.display='block';ensureAuthReady().catch(()=>{});}setTimeout(()=>i.focus(),50)}
-function showClientLogin(){$("#coachLogin").style.display='none';$("#clientLogin").style.display='block'}
+function showClientLogin(){$("#coachLogin").style.display='none';$("#clientLogin").style.display='block';prefillRememberedCode()}
 /* Muestra/oculta el estado "cargando" en un botón (spinner + deshabilitado), evitando doble pulsación. */
 function setBtnLoading(btn,on,txt){
  if(!btn)return;
@@ -9199,8 +9202,12 @@ function setBtnLoading(btn,on,txt){
 /* Deja los botones de acceso listos ("Entrar", habilitados) cada vez que se muestra la pantalla de acceso,
    para que al cerrar sesión no se queden en "Entrando…" bloqueados. */
 function resetLoginButtons(){try{document.querySelectorAll('.login-btn').forEach(b=>setBtnLoading(b,false));}catch(_){}}
+/* «Recordar en este dispositivo»: si se marca, el código queda guardado SOLO en este navegador
+   (para no tener que escribirlo cada vez). Desmarcado al entrar, se borra. No cambia cómo se entra. */
+function prefillRememberedCode(){try{const c=Store.get('codigo_recordado');const i=$("#loginCode"),r=$("#loginRemember");if(!i||!r)return;if(c){i.value=c;r.checked=true}else r.checked=false}catch(_){}}
+function rememberCodeAfterLogin(code){try{const r=$("#loginRemember");Store.set('codigo_recordado',(r&&r.checked&&code)?code:null)}catch(_){}}
 async function loginClient(btn){
- if(AUTH_ENABLED) return loginClientWithAuth(btn);
+ if(AUTH_ENABLED){const code=$("#loginCode").value.trim().toUpperCase();await loginClientWithAuth(btn);if(SESSION&&SESSION.role==='client')rememberCodeAfterLogin(code);return;}
  const code=$("#loginCode").value.trim().toUpperCase();
  if(!code){toast("Escribe tu código");return}
  if(!DATA.codes){toast("Error: no hay códigos registrados en el sistema");return}
@@ -9216,6 +9223,7 @@ async function loginClient(btn){
  UI.home=true;
  renderGate();
  reset();
+ rememberCodeAfterLogin(code);
  toast(`Bienvenido, ${c.name}`)
 }
 async function submitCoach(btn){

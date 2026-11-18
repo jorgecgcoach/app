@@ -1,0 +1,46 @@
+# Pruebas automáticas en cada PR y en cada cambio de main.
+# Solo lee el código: no publica nada, no usa secretos y no toca Firebase real
+# (todo corre contra los emuladores locales de Firebase).
+name: Pruebas
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Pruebas de unidad
+        run: npm run test:unidad
+      - name: Copias (unidad)
+        run: npm run test:copias-unidad
+      - name: Reglas básicas (emulador)
+        run: npm test
+      - name: Seguridad de reglas (emulador)
+        run: npm run test:seguridad
+      - name: Migración C1 (emulador)
+        run: npm run test:migracion
+      - name: Copias completas (emulador)
+        run: npm run test:copias

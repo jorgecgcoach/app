@@ -8,6 +8,10 @@ on:
     - cron: '0 17 * * *'
   workflow_dispatch:
 
+# Solo necesita leer el código; los secretos se pasan aparte.
+permissions:
+  contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest

@@ -81,8 +81,9 @@ test('el entrenador da el alta: cuenta con la marca de la ficha; tras guardar la
     assert.equal(u.email, await ident.clientEmailFromCode(code));
     // La función no toca la ficha: la escribe la app del entrenador, con sus reglas.
     assert.equal((await db.collection('clients').doc('c1').get()).data().authUid, undefined);
-    await updateDoc(doc(ent.cdb, 'clients/c1'), { code, authUid: uid, authUids: [uid] });
-    await updateDoc(doc(ent.cdb, 'clients/coach_data'), { codes: { [code]: { client: 'c1' } } });
+    // Guardia _rev de las reglas: cada escritura sube el contador exactamente en 1.
+    await updateDoc(doc(ent.cdb, 'clients/c1'), { code, authUid: uid, authUids: [uid], _rev: 2 });
+    await updateDoc(doc(ent.cdb, 'clients/coach_data'), { codes: { [code]: { client: 'c1' } }, _rev: 2 });
     const cli = sdk();
     try {
       await signInWithEmailAndPassword(cli.auth, await ident.clientEmailFromCode(code), ident.clientPasswordFromCode(code));

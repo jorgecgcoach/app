@@ -171,8 +171,11 @@ test('cliente y entrenador editan a la vez la misma ficha sin perder nada', asyn
 test('tiempo real: el entrenador escucha la colección y el cliente solo su ficha', async function () {
   const coachDb = testEnv.authenticatedContext('uid-coach', { role: 'coach' }).firestore();
   const clientDb = testEnv.authenticatedContext('uid-a').firestore();
+  // Solo vale la respuesta del SERVIDOR (la que aplica las reglas). Desde el SDK 13 puede llegar antes una
+  // instantánea de la caché local (p. ej. con la ficha propia ya leída) que no dice nada de los permisos.
   const listen = (q) => new Promise((resolve, reject) => {
-    const off = q.onSnapshot((snap) => { off(); resolve(snap); }, (e) => reject(e));
+    const off = q.onSnapshot({ includeMetadataChanges: true },
+      (snap) => { if (snap.metadata.fromCache) return; off(); resolve(snap); }, (e) => reject(e));
   });
   const all = await listen(coachDb.collection('clients'));
   assert.equal(all.size, 3);

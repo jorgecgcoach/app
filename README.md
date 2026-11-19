@@ -15,8 +15,8 @@ entrenamiento, nutrición, negocio, copias de seguridad y avisos.
 ## Cómo se publica
 
 1. Cada cambio va en una rama y llega a `main` mediante un PR.
-2. `main` está protegida: todo entra por PR. Las pruebas automáticas en cada PR (workflow
-   «Pruebas») están preparadas en la rama `organizacion/workflows`, pendientes de subir.
+2. El PR ejecuta las pruebas automáticas ([.github/workflows/pruebas.yml](.github/workflows/pruebas.yml)).
+   `main` está protegida: no se fusiona nada con pruebas en rojo.
 3. Al fusionar en `main`, GitHub Pages publica la web en 1–2 minutos.
 4. **Las reglas de Firebase NO se publican con la web.** Se generan con el UID real
    (`npm run reglas:preparar`), se prueban (`npm run test:reglas-despliegue`) y se publican aparte,
@@ -63,10 +63,11 @@ Solo en local (no en GitHub, porque necesitan cosas que no están en el reposito
 
 | Flujo | Cuándo | Qué hace |
 | --- | --- | --- |
+| Pruebas | Cada PR y cada cambio de `main` | Ejecuta las pruebas. Sin secretos. |
 | Avisos de negocio | Diario 05:00 UTC | Lee Firestore (solo lectura) y envía el resumen por correo. |
 | Notificaciones diarias | Diario 17:00 UTC | Recordatorios de seguimiento a clientes. |
 
-Pendiente (rama `organizacion/workflows`): workflow «Pruebas» y permisos mínimos (`contents: read`) en los dos trabajos diarios. Los secretos (`FIREBASE_SERVICE_ACCOUNT`,
+Todos tienen permisos mínimos (`contents: read`). Los secretos (`FIREBASE_SERVICE_ACCOUNT`,
 `GMAIL_APP_PASSWORD`) solo existen en *Settings → Secrets* de GitHub.
 Dependabot revisa las dependencias cada semana ([.github/dependabot.yml](.github/dependabot.yml)).
 

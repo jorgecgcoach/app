@@ -244,8 +244,8 @@ test('altas por servidor: con la sesión del entrenador caducada no se llama a l
   assert.deepEqual(c.llamadas, []);
 });
 
-test('el interruptor de altas por servidor está apagado en el repositorio', () => {
-  assert.match(html, /const ALTAS_SERVIDOR=false;/);
+test('el interruptor de altas por servidor está encendido (función altaCliente desplegada)', () => {
+  assert.match(html, /const ALTAS_SERVIDOR=true;/);
   assert.match(html, /firebase-functions-compat.min.js/);
 });
 

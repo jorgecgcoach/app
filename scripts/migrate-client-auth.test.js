@@ -75,11 +75,11 @@ test('--apply no toca producción si nadie ha dado el permiso explícito', funct
   assert.match(res.stderr, /No se ha aplicado nada/);
 });
 
-test('C1 activado: acceso por cuenta encendido, altas en servidor apagadas, y las reglas del repo siguen con el marcador (el UID solo en reglas-despliegue)', function () {
+test('C1 activado: acceso por cuenta encendido, altas en servidor encendidas (opción C desplegada), y las reglas del repo siguen con el marcador (el UID solo en reglas-despliegue)', function () {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const rules = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
   assert.match(html, /const AUTH_ENABLED=true;/);
-  assert.match(html, /const ALTAS_SERVIDOR=false;/);
+  assert.match(html, /const ALTAS_SERVIDOR=true;/);
   assert.match(html, /const CONTACTS_COLLECTION=false;/);
   assert.match(html, /function ensureAuth\(/);
   assert.match(html, /function loadCoachDataAfterAuth\(/);

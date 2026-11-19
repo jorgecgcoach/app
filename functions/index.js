@@ -3,10 +3,14 @@
    Ver docs/altas-servidor.md. */
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { beforeUserCreated } = require('firebase-functions/v2/identity');
-const admin = require('firebase-admin');
+const { initializeApp } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 const { altaCliente, rechazarRegistro } = require('./altas');
 
-admin.initializeApp();
+initializeApp();
+// altas.js recibe un objeto con la forma de siempre (admin.firestore(), admin.auth()).
+const admin = { firestore: () => getFirestore(), auth: () => getAuth() };
 
 // UID del entrenador: en functions/.env.appjorgecgcoach (ignorado por git; lo genera `npm run reglas:preparar`).
 // Sin configurar = nadie entra por UID (solo con el claim role=='coach'): falla cerrado.

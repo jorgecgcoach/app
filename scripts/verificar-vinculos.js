@@ -71,7 +71,7 @@ async function cuentasSinVincular(admin) {
 }
 
 async function main() {
-  const admin = require('firebase-admin');
+  const admin = require('./admin-modular');
   const emulador = !!(process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST);
   if (!emulador && !process.argv.includes('--proyecto-real')) {
     console.error('Sin emuladores hace falta --proyecto-real (solo lee).'); process.exit(1);

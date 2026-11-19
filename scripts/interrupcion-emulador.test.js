@@ -13,7 +13,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_
 }
 const PROJECT = 'demo-appjorgecgcoach';
 process.env.GCLOUD_PROJECT = PROJECT;
-const admin = require('firebase-admin');
+const admin = require('./admin-modular');
 if (!admin.apps.length) admin.initializeApp({ projectId: PROJECT });
 const { applyMigration, CLAIM } = require('./migrate-client-auth');
 const { verificarVinculos, cuentasSinVincular } = require('./verificar-vinculos');
@@ -47,7 +47,7 @@ const cuentasCliente = async () => (await admin.auth().listUsers()).users.filter
 
 // La migración real en OTRO proceso que muere de golpe (process.exit, sin limpiar nada) en el momento pedido.
 const CORTADA = `
-  const admin = require('firebase-admin');
+  const admin = require('./admin-modular');
   admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT });
   const n0 = Number(process.env.CORTE_N); let n = 0;
   const morir = () => { if (++n === n0) process.exit(137); };

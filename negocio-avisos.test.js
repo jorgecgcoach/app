@@ -386,14 +386,14 @@ test('sin secretos el proceso sale 1 y no vuelca el valor', () => {
   assert.equal(out.includes('mock-app-password'), false);
 });
 
-test('los workflows quedan en Node 20 y el cron de negocio tiene margen', () => {
+test('los workflows quedan en Node 22 (firebase-admin 14 lo exige) y el cron de negocio tiene margen', () => {
   const negocio = fs.readFileSync(path.join(__dirname, '.github/workflows/negocio-avisos.yml'), 'utf8');
   const notify = fs.readFileSync(path.join(__dirname, '.github/workflows/notify.yml'), 'utf8');
-  assert.match(negocio, /node-version:\s*'20'/);
+  assert.match(negocio, /node-version:\s*'22'/);
   assert.match(negocio, /cron:\s*'0 5 \* \* \*'/);
   assert.match(negocio, /1 h/);
   assert.match(negocio, /npm install firebase-admin nodemailer/);
-  assert.match(notify, /node-version:\s*'20'/);
+  assert.match(notify, /node-version:\s*'22'/);
   assert.doesNotMatch(notify, /node-version:\s*'18'/);
   assert.match(notify, /npm install firebase-admin/);
   assert.match(notify, /cron:\s*'0 17 \* \* \*'/);

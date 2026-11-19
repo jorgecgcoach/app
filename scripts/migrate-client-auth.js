@@ -113,7 +113,7 @@ function assertApplyAllowed() {
 }
 
 function initAdmin(mode) {
-  const admin = require('firebase-admin');
+  const admin = require('./admin-modular');
   if (admin.apps.length) return admin;
   if (mode === 'emulator') {
     admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-appjorgecgcoach' });

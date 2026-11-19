@@ -431,7 +431,7 @@ async function runProduction(env) {
   const source = env || process.env;
   const serviceAccount = parseServiceAccount(source.FIREBASE_SERVICE_ACCOUNT);
   if (!source.GMAIL_APP_PASSWORD) throw new Error('Falta GMAIL_APP_PASSWORD');
-  const admin = require('firebase-admin');
+  const admin = require('./scripts/admin-modular');
   const nodemailer = require('nodemailer');
   if (!admin.apps.length) {
     admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });

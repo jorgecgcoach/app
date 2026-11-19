@@ -32,7 +32,7 @@ function rutaLocal(dir, nombre) {
 }
 
 function iniciarStorage(opciones) {
-  const admin = require('firebase-admin');
+  const admin = require('./admin-modular');
   const emu = !!process.env.FIREBASE_STORAGE_EMULATOR_HOST;
   const projectEmu = process.env.GCLOUD_PROJECT || 'demo-jcg-copias';
   const nombre = emu ? (process.env.STORAGE_BUCKET || projectEmu + '.appspot.com') : BUCKET_REAL;

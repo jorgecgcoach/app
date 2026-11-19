@@ -22,8 +22,8 @@
     "test:funciones": "firebase emulators:exec --only auth,firestore,functions --project demo-appjorgecgcoach --config firebase.funciones.json \"node --test --test-concurrency=1 scripts/funciones-emulador.test.js\""
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "3.0.4",
-    "firebase": "^10.14.1",
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.4.0",
     "firebase-admin": "^14.5.1",
     "firebase-tools": "^15.37.0"
   }

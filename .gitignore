@@ -16,3 +16,6 @@ reglas-despliegue/
 # Funciones: dependencias y configuración con el UID real (nunca en git).
 functions/node_modules/
 functions/.env*
+
+# Web montada para Firebase Hosting (se genera con scripts/construir-web.js).
+web-publicada/

@@ -13,7 +13,7 @@ process.env.FIRESTORE_EMULATOR_HOST = HOST;
 process.env.GCLOUD_PROJECT = PROJECT;
 process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 if (!PROJECT.startsWith('demo-')) { console.error('Rechazado: solo proyecto demo-'); process.exit(1); }
-const admin = require('firebase-admin');
+const admin = require('../scripts/admin-modular');
 admin.initializeApp({ projectId: PROJECT });
 const db = admin.firestore();
 

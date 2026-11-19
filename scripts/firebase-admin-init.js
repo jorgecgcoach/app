@@ -3,7 +3,7 @@
    - Sin emulador: proyecto real SOLO si se pasa --proyecto-real y hay cuenta de servicio
      en GOOGLE_APPLICATION_CREDENTIALS (ruta a un JSON fuera del repositorio). */
 function iniciar(opciones) {
-  const admin = require('firebase-admin');
+  const admin = require('./admin-modular');
   if (admin.apps.length) return { admin, modo: process.env.FIRESTORE_EMULATOR_HOST ? 'emulador' : 'real' };
   if (process.env.FIRESTORE_EMULATOR_HOST) {
     admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-appjorgecgcoach' });

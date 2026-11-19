@@ -180,16 +180,19 @@ async function runFixture(file) {
 async function runProduction(env) {
   const source = env || process.env;
   const serviceAccount = parseServiceAccount(source.FIREBASE_SERVICE_ACCOUNT);
-  const admin = require('firebase-admin');
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+  // API modular de firebase-admin: igual en la versión 12 y en la 14 (la 14 quitó admin.apps/admin.credential).
+  const { initializeApp, getApps, cert } = require('firebase-admin/app');
+  const { getFirestore } = require('firebase-admin/firestore');
+  const { getMessaging } = require('firebase-admin/messaging');
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert(serviceAccount),
       databaseURL: 'https://jcgcoach.firebaseio.com'
     });
   }
   return sendNotifications({
-    db: admin.firestore(),
-    messaging: admin.messaging()
+    db: getFirestore(),
+    messaging: getMessaging()
   });
 }
 

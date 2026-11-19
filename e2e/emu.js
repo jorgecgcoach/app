@@ -13,7 +13,7 @@ if (!PROJECT.startsWith('demo-') || !/^127\.0\.0\.1:\d+$/.test(process.env.FIRES
   console.error('Rechazado: solo emulador local con proyecto demo-');
   process.exit(1);
 }
-const admin = require('firebase-admin');
+const admin = require('../scripts/admin-modular');
 admin.initializeApp({ projectId: PROJECT });
 const db = admin.firestore();
 

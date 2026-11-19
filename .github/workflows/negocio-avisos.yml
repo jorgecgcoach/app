@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       # firebase-admin y nodemailer, que es lo que negocio-avisos.js requiere.
       # No hay package.json en la raíz a propósito: lo añade el PR de reglas.
       - run: npm install firebase-admin nodemailer

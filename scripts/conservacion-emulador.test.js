@@ -10,7 +10,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_
 }
 const PROJECT = 'demo-appjorgecgcoach';
 process.env.GCLOUD_PROJECT = PROJECT;
-const admin = require('firebase-admin');
+const admin = require('./admin-modular');
 if (!admin.apps.length) admin.initializeApp({ projectId: PROJECT });
 const { applyMigration, comprobar, simularAislamiento } = require('./migrate-client-auth');
 const ident = require('../auth/code-identity');

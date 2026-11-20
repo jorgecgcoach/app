@@ -22,6 +22,14 @@ const LAN = process.env.E2E_LAN || '';
 if (LAN && !/^(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)$/.test(LAN)) { console.error('E2E_LAN debe ser una IP privada de tu red (192.168.x.x o 10.x.x.x)'); process.exit(1); }
 const EMU = { host: LAN || '127.0.0.1', port: 8080 };
 const AUTH = process.env.E2E_AUTH === '1';
+// E2E_MINIFICAR=1: sirve el HTML y los .js minificados igual que en la web publicada (scripts/construir-web.js).
+const MINIFICAR = process.env.E2E_MINIFICAR === '1';
+const minificador = MINIFICAR ? require('../scripts/construir-web.js') : null;
+const cacheMin = new Map();
+function minificado(clave, crear) {
+  if (!cacheMin.has(clave)) cacheMin.set(clave, crear());
+  return cacheMin.get(clave);
+}
 // En red local solo se sirve la app: nada de documentación, scripts ni carpetas ocultas.
 const BLOCKED_LAN = /^\/(docs|scripts|e2e|firestore|functions|node_modules)\/|\/\./;
 
@@ -44,6 +52,8 @@ function buildHtml() {
   html = html.replace(dbLine, `${dbLine}\n  db.useEmulator('${EMU.host}', ${EMU.port}); window.__E2E_EMULATOR__ = '${EMU.host}:${EMU.port}';`);
   // Sin messaging: su service worker lleva la configuración real.
   html = html.replace('if(firebase.messaging && firebase.messaging.isSupported && firebase.messaging.isSupported()){', 'if(false){');
+  // Sin App Check: el proyecto de pruebas no existe en la nube y Google respondería 400.
+  html = html.replace('if(firebase.appCheck) firebase.appCheck(app)', 'if(false) firebase.appCheck(app)');
 
   // Modo Auth (E2E_AUTH=1): activa AUTH_ENABLED SOLO en esta copia servida y conecta Firebase Auth
   // al emulador (puerto 9099). index.html en disco sigue con AUTH_ENABLED=false.
@@ -76,6 +86,12 @@ const html = buildHtml();
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
   if (url === '/' || url === '/index.html') {
+    if (MINIFICAR) {
+      minificado('index.html', () => minificador.minificarHtml(buildHtml()).then((r) => r.html)).then((h) => {
+        res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-store' }); res.end(h);
+      }, (e) => { res.writeHead(500); res.end(String(e.message || e)); });
+      return;
+    }
     res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-store' });
     res.end(buildHtml());
     return;
@@ -84,8 +100,14 @@ http.createServer((req, res) => {
   if (LAN && (BLOCKED_LAN.test(url) || /\.(md|ps1|log|rules)$/i.test(url))) { res.writeHead(404); res.end(); return; }
   const file = path.normalize(path.join(ROOT, url));
   if (!file.startsWith(ROOT) || file.includes('node_modules') || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+  if (MINIFICAR && file.endsWith('.js')) {
+    minificado(file, () => minificador.minificarJs(fs.readFileSync(file, 'utf8'), url)).then((js) => {
+      res.writeHead(200, { 'content-type': TYPES['.js'], 'cache-control': 'no-store' }); res.end(js);
+    }, (e) => { res.writeHead(500); res.end(String(e.message || e)); });
+    return;
+  }
   res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });
   fs.createReadStream(file).pipe(res);
 }).listen(PORT, LAN || '127.0.0.1', () => {
-  console.log(`e2e: app en http://${LAN || '127.0.0.1'}:${PORT} -> emulador ${EMU.host}:${EMU.port}, proyecto ${PROJECT} (${html.length} bytes)`);
+  console.log(`e2e: app en http://${LAN || '127.0.0.1'}:${PORT} -> emulador ${EMU.host}:${EMU.port}, proyecto ${PROJECT} (${html.length} bytes${MINIFICAR ? ', minificado' : ''})`);
 });

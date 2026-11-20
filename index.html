@@ -1655,6 +1655,7 @@ html,body{overflow-x:clip}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-storage-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-messaging-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-app-check-compat.min.js"></script>
 <script src="shared/safe-save.js?v=20261112-c1-relleno"></script>
 <script src="shared/copia-aditiva.js?v=20261110-copias3"></script>
 <script src="shared/client-catalog.js?v=20261109-c1"></script>
@@ -1694,6 +1695,15 @@ if(typeof firebase === 'undefined'){
   window.firebaseFailed = true;
 }else{
   const app = firebase.initializeApp(firebaseConfig);
+  // App Check: Firebase comprueba (reCAPTCHA Enterprise, invisible) que la petición sale de esta web y no de una
+  // copia o un script. La clave del sitio es pública por diseño. Si no carga, la app sigue funcionando igual.
+  // reCAPTCHA necesita el <body>: se activa cuando la página ya existe (antes de cualquier lectura de datos).
+  const activarAppCheck=()=>{
+    try{
+      if(firebase.appCheck) firebase.appCheck(app).activate(new firebase.appCheck.ReCaptchaEnterpriseProvider('6Ldk2iguAAAAANZ4v5IErJY02m4AikjGBC94xwFL'), true);
+    }catch(e){ console.warn('App Check no disponible:', e); }
+  };
+  if(document.body) activarAppCheck(); else document.addEventListener('DOMContentLoaded', activarAppCheck, { once: true });
   const db = firebase.firestore(app);
   window.db = db;
   // Sin persistencia local (IndexedDB) a propósito: con ella, escrituras hechas sin
